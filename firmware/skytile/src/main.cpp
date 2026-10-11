@@ -16,6 +16,7 @@
 #include <freertos/semphr.h>
 
 #include "app.h"
+#include <esp_task_wdt.h>
 
 LGFX gfx;
 
@@ -213,11 +214,17 @@ void setup()
   // lv_demo_widgets();// Main UI interface
   app_init();
 
+  // Freeze watchdog: restart if the main loop stops for 30 s (CPU0 idle task stays watched too).
+  esp_task_wdt_config_t wdt = {.timeout_ms = 30000, .idle_core_mask = 1, .trigger_panic = true};
+  esp_task_wdt_reconfigure(&wdt);
+  esp_task_wdt_add(NULL);
+
   Serial.println( "Setup done" );
 }
 
 void loop()
 {
+  esp_task_wdt_reset();
   app_loop();
   lv_timer_handler(); /* let the GUI do its work */
   delay(1);

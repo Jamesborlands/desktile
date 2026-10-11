@@ -113,6 +113,7 @@ struct Todo {
 };
 
 static SemaphoreHandle_t g_mtx;
+static volatile uint32_t g_last_ok = 0;  // millis of the last successful fetch (any feed)
 static volatile int g_net_status = 0;  // 0 connecting, 1 live, 2 error
 
 // Each feed: the net task fills the *_net copy and sets the flag; app_loop copies it.
@@ -178,7 +179,7 @@ static bool http_req(const char *method, const char *url, bool worker, String &o
   if (worker) http.addHeader("X-Tile-Key", TILE_KEY);
   code = strcmp(method, "POST") == 0 ? http.POST("") : http.GET();
   bool ok = code >= 200 && code < 300;
-  if (ok) out = http.getString();
+  if (ok) { out = http.getString(); g_last_ok = millis(); }
   http.end();
   return ok;
 }
@@ -1511,12 +1512,14 @@ static void refresh_bar() {
   set_text(chip_filter_lbl, FILTER_NAMES[g_filter]);
   // Status only appears when something is wrong; a healthy tile shows nothing here.
   bool wifi_down = g_net_status == 0, planes_err = g_net_status == 2 && g_mode == M_PLANES;
-  set_text(chip_status_lbl, wifi_down ? "NO WIFI" : (planes_err ? "NO DATA" : ""));
+  bool stale = !wifi_down && g_last_ok && millis() - g_last_ok > 5 * 60000UL;  // nothing loaded for 5 min
+  set_text(chip_status_lbl, wifi_down ? "NO WIFI" : (stale ? "OFFLINE" : (planes_err ? "NO DATA" : "")));
   lv_obj_set_style_text_color(chip_status_lbl, lv_color_hex(C_MUTED), 0);
-  lv_obj_set_style_bg_color(chip_dot, lv_color_hex(wifi_down ? C_DIM : C_RED), 0);
-  show(chip_dot, wifi_down || planes_err);
+  lv_obj_set_style_bg_color(chip_dot, lv_color_hex(wifi_down || stale ? C_DIM : C_RED), 0);
+  bool problem = wifi_down || stale || planes_err;
+  show(chip_dot, problem);
   // with the status hidden, the Planes filter chip sits at the right edge
-  lv_obj_set_x(fchip, wifi_down || planes_err ? 560 : 654);
+  lv_obj_set_x(fchip, problem ? 560 : 654);
 }
 
 static void refresh_all() {
@@ -1919,6 +1922,21 @@ void app_loop() {
     if (g_idle) refresh_idle();
     apply_backlight();
     update_knob_ui();
+    // Self-heal: nothing loaded for 20 minutes (stuck WiFi/network stack) -> restart.
+    if (millis() > 20 * 60000UL && millis() - g_last_ok > 20 * 60000UL) {
+      Serial.println("[health] no data for 20 min, restarting");
+      ESP.restart();
+    }
+    // Nightly refresh at 4 AM while asleep (clears a day of memory fragmentation).
+    if (g_idle && clock_ok() && millis() > 3600000UL) {
+      time_t now = time(nullptr);
+      struct tm tm;
+      localtime_r(&now, &tm);
+      if (tm.tm_hour == 4 && tm.tm_min == 0) {
+        Serial.println("[health] nightly restart");
+        ESP.restart();
+      }
+    }
   }
   if (g_lite_map && millis() - g_last_touch > 150) {  // finger lifted: redraw in full detail
     g_lite_map = false;
