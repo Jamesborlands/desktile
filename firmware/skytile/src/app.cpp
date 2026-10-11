@@ -555,7 +555,8 @@ static lv_obj_t *iss_pos, *iss_alt, *iss_tag, *pass_when, *pass_info, *pass_dir,
 static lv_obj_t *scr_todo, *todo_list, *todo_head, *todo_empty;
 static lv_obj_t *ota_overlay, *ota_lbl, *ota_bar;
 static lv_obj_t *idle_ov, *idle_tag, *tag_eye, *tag_name, *tag_line;
-static lv_obj_t *dash_time, *dash_date, *dash_td_count, *dash_td[4], *dash_l_count, *dash_l_name, *dash_l_vis, *dash_iss_when, *dash_iss_info;
+static const int DASH_TD = 7;  // to-dos shown on the idle dashboard
+static lv_obj_t *dash_time, *dash_date, *dash_td_count, *dash_td[DASH_TD], *dash_l_count, *dash_l_name, *dash_l_vis;
 static bool g_idle = false;
 
 static void set_text(lv_obj_t *l, const char *t) {
@@ -1271,7 +1272,7 @@ static void refresh_all();
 static void set_mode(Mode m);
 
 // Idle dashboard: live map on the left (full height), and a column on the right with
-// the time, open to-dos, the next launch countdown and the next good ISS pass.
+// the time, open to-dos and the next launch countdown.
 static const int DASH_MAP_W = 520;
 
 static void set_map_full(bool full) {
@@ -1338,12 +1339,12 @@ static void refresh_idle() {
   snprintf(b, sizeof b, left ? "%d LEFT" : "", left);
   set_text(dash_td_count, b);
   int shown = 0;
-  for (int i = 0; i < g_td_n && shown < 4; i++) {
+  for (int i = 0; i < g_td_n && shown < DASH_TD; i++) {
     if (g_td[i].done) continue;
     set_text(dash_td[shown++], g_td[i].text);
   }
   if (!left) set_text(dash_td[shown++], g_td_loaded ? "All done" : "...");
-  while (shown < 4) set_text(dash_td[shown++], "");
+  while (shown < DASH_TD) set_text(dash_td[shown++], "");
   // next launch
   long now = time(nullptr);
   int first = 0;
@@ -1359,16 +1360,6 @@ static void refresh_idle() {
     set_text(dash_l_count, "--");
     set_text(dash_l_name, "");
     set_text(dash_l_vis, "");
-  }
-  // ISS pass
-  if (g_sp.pass_ok && clock_ok()) {
-    fmt_local(b, sizeof b, g_sp.pass_t, "%a %I:%M %p");
-    set_text(dash_iss_when, b);
-    snprintf(b, sizeof b, "%d min, %d deg high, %s to %s", g_sp.pass_dur, g_sp.pass_el, g_sp.from, g_sp.to);
-    set_text(dash_iss_info, b);
-  } else {
-    set_text(dash_iss_when, "--");
-    set_text(dash_iss_info, "");
   }
 }
 
@@ -1440,16 +1431,12 @@ static void build_idle() {
   dash_td_count = mk_label(col, "", &lv_font_montserrat_12, C_MUTED, 0, 118);
   lv_obj_set_width(dash_td_count, 260);
   lv_obj_set_style_text_align(dash_td_count, LV_TEXT_ALIGN_RIGHT, 0);
-  for (int i = 0; i < 4; i++) dash_td[i] = mk_dot_label(col, &lv_font_montserrat_16, C_TEXT, 20, 140 + i * 25, 240);
-  dash_rule(col, 250);
-  dash_eye(col, "NEXT LAUNCH", C_SPACE, 264);
-  dash_l_count = mk_label(col, "", &lv_font_montserrat_24, C_SPACE, 20, 282);
-  dash_l_name = mk_dot_label(col, &lv_font_montserrat_12, C_MUTED, 20, 314, 240);
-  dash_l_vis = mk_dot_label(col, &lv_font_montserrat_12, C_SPACE, 20, 332, 240);
-  dash_rule(col, 358);
-  dash_eye(col, "ISS NEXT GOOD PASS", C_MUTED, 372);
-  dash_iss_when = mk_label(col, "", &lv_font_montserrat_24, C_TEXT, 20, 390);
-  dash_iss_info = mk_dot_label(col, &lv_font_montserrat_12, C_MUTED, 20, 422, 240);
+  for (int i = 0; i < DASH_TD; i++) dash_td[i] = mk_dot_label(col, &lv_font_montserrat_16, C_TEXT, 20, 142 + i * 26, 240);
+  dash_rule(col, 334);
+  dash_eye(col, "NEXT LAUNCH", C_SPACE, 348);
+  dash_l_count = mk_label(col, "", &lv_font_montserrat_24, C_SPACE, 20, 366);
+  dash_l_name = mk_dot_label(col, &lv_font_montserrat_12, C_MUTED, 20, 398, 240);
+  dash_l_vis = mk_dot_label(col, &lv_font_montserrat_12, C_SPACE, 20, 416, 240);
   mk_label(col, "TOUCH TO WAKE", &lv_font_montserrat_12, C_DIM, 20, 452);
 
   lv_obj_add_flag(idle_ov, LV_OBJ_FLAG_HIDDEN);
