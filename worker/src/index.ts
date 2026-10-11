@@ -175,22 +175,27 @@ async function space(env: Env, ctx: ExecutionContext) {
   const p = at(now);
   const iss = p ? { lat: Number(p.lat.toFixed(3)), lon: Number(p.lon.toFixed(3)), alt_km: Math.round(p.alt), overhead: p.el > 10 } : null;
 
-  // Next pass above 10 degrees in the next 24 h (1-minute steps, cached 10 minutes).
+  // Next good pass (max elevation 20+ degrees) in the next 48 h, 2-minute steps,
+  // cached 10 minutes. Falls back to the next pass above 10 degrees if none is good.
   const pass = await cached(`space/iss-pass/${Math.floor(now.getTime() / 600000)}`, 600, ctx, async () => {
     let start: number | null = null, maxEl = 0, startAz = 0, endAz = 0;
-    for (let m = 0; m < 24 * 60; m++) {
+    let fallback: unknown = null;
+    for (let m = 0; m < 48 * 60; m += 2) {
       const t = new Date(now.getTime() + m * 60000);
       const s = at(t);
       if (!s) continue;
       if (s.el > 10) {
-        if (start === null) { start = t.getTime(); startAz = s.az; }
+        if (start === null) { start = t.getTime(); startAz = s.az; maxEl = 0; }
         if (s.el > maxEl) maxEl = s.el;
         endAz = s.az;
       } else if (start !== null) {
-        return { t: Math.floor(start / 1000), dur_min: Math.round((t.getTime() - start) / 60000), max_el: Math.round(maxEl), from: compass(startAz), to: compass(endAz) };
+        const p = { t: Math.floor(start / 1000), dur_min: Math.max(1, Math.round((t.getTime() - start) / 60000)), max_el: Math.round(maxEl), from: compass(startAz), to: compass(endAz) };
+        if (maxEl >= 20) return p;
+        fallback ??= p;
+        start = null;
       }
     }
-    return null;
+    return fallback;
   });
 
   // Ground track for the mini map: 30 min back to 95 min ahead (about one orbit).

@@ -32,7 +32,9 @@ static const float RANGE_MIN = 5, RANGE_MAX = 100, RANGE_DEFAULT = 25;  // outer
 static const uint32_t FETCH_MS = 10000;
 
 static const int MAP_W = 500, MAP_H = 436, BAR_H = 44;
-static const int RING_PX = MAP_H / 2 - 20;  // outer range ring radius in px
+// The map is MAP_W x MAP_H normally and full screen (800 x 480) while idle.
+static int g_mw = MAP_W, g_mh = MAP_H;
+static inline float ring_px() { return g_mh / 2 - 20; }  // outer range ring radius in px
 
 static volatile float g_range = RANGE_DEFAULT;  // current map range (nm); read by the net task too
 static bool g_lite_map = false;  // set while dragging/pinching: coarser coastline, faster redraws
@@ -41,9 +43,9 @@ static const float KLON = 60.0f * 0.8389f;       // nm per degree of longitude a
 
 // Map projection: local flat-earth around home, north up, px relative to the map.
 static inline void project(float lat, float lon, float &x, float &y) {
-  float ppn = RING_PX / g_range;
-  x = MAP_W / 2 + ((lon - HOME_LON) * KLON - g_pan_e) * ppn;
-  y = MAP_H / 2 - ((lat - HOME_LAT) * 60.0f - g_pan_n) * ppn;
+  float ppn = ring_px() / g_range;
+  x = g_mw / 2 + ((lon - HOME_LON) * KLON - g_pan_e) * ppn;
+  y = g_mh / 2 - ((lat - HOME_LAT) * 60.0f - g_pan_n) * ppn;
 }
 
 static const uint32_t C_BG = 0x0a1220, C_LINE = 0x1a2740, C_MUTED = 0x8796ad,
@@ -464,7 +466,7 @@ static void net_task(void *) {
     uint32_t now = millis();
 
     // Planes: every 10 s on the Planes screen, every minute otherwise.
-    float want = g_range * 1.3f;  // fetch radius covers the map corners
+    float want = g_range * sqrtf((float)g_mw * g_mw + (float)g_mh * g_mh) / 2 / ring_px();  // reach the map corners
     int nm = want <= 30 ? 30 : (want <= 60 ? 60 : 130);
     float pe = g_pan_e, pn = g_pan_n;
     bool moved = m == M_PLANES && fabsf(pe - last_e) + fabsf(pn - last_n) > nm * 0.3f;
@@ -536,7 +538,7 @@ static inline int sel_slot() { return g_mode == M_SHIPS ? 1 : 0; }
 
 // widgets: top bar
 static lv_obj_t *tabs[4], *tab_lbl[4];
-static lv_obj_t *fchip, *chip_filter_lbl, *chip_status_lbl, *chip_dot;
+static lv_obj_t *fchip, *chip_filter_lbl, *chip_status_lbl, *chip_dot, *bar_obj, *map_card, *zoom_btn[2], *north_lbl;
 // widgets: map screen (Planes + Ships)
 static lv_obj_t *scr_map;
 static lv_obj_t *map_obj, *geo, *empty_lbl, *ring_lbl[2], *ring_obj[2], *home_obj, *recenter_btn;
@@ -552,7 +554,8 @@ static lv_obj_t *iss_pos, *iss_alt, *iss_tag, *pass_when, *pass_info, *pass_dir,
 // widgets: to-do
 static lv_obj_t *scr_todo, *todo_list, *todo_head, *todo_empty;
 static lv_obj_t *ota_overlay, *ota_lbl, *ota_bar;
-static lv_obj_t *idle_ov, *idle_eye, *idle_big, *idle_sub, *idle_line, *idle_k[3], *idle_v[3], *idle_foot;
+static lv_obj_t *idle_ov, *idle_tag, *tag_eye, *tag_name, *tag_line;
+static lv_obj_t *dash_time, *dash_date, *dash_td_count, *dash_td[4], *dash_l_count, *dash_l_name, *dash_l_vis, *dash_iss_when, *dash_iss_info;
 static bool g_idle = false;
 
 static void set_text(lv_obj_t *l, const char *t) {
@@ -693,7 +696,7 @@ static void rebuild_visible() {
     float lat, lon, x, y;
     item_pos(i, lat, lon);
     project(lat, lon, x, y);
-    if (x < -10 || x > MAP_W + 10 || y < -10 || y > MAP_H + 10) continue;  // off the map
+    if (x < -10 || x > g_mw + 10 || y < -10 || y > g_mh + 10) continue;  // off the map
     if (g_mode == M_PLANES) {
       const Plane &p = g_pl[i];
       if (p.alt < 0) continue;  // on the ground: hidden (too noisy at airports)
@@ -885,8 +888,8 @@ static void draw_geo(lv_event_t *e) {
       if (k >= m.count) k = m.count - 1;  // always end on the last point
       float px1, py1;
       project(MAP_PTS[m.start + k][0] / 1e4f, MAP_PTS[m.start + k][1] / 1e4f, px1, py1);
-      bool off = (px0 < -40 && px1 < -40) || (px0 > MAP_W + 40 && px1 > MAP_W + 40) ||
-                 (py0 < -40 && py1 < -40) || (py0 > MAP_H + 40 && py1 > MAP_H + 40);
+      bool off = (px0 < -40 && px1 < -40) || (px0 > g_mw + 40 && px1 > g_mw + 40) ||
+                 (py0 < -40 && py1 < -40) || (py0 > g_mh + 40 && py1 > g_mh + 40);
       if (!off) {
         ln.p1.x = a.x1 + px0; ln.p1.y = a.y1 + py0;
         ln.p2.x = a.x1 + px1; ln.p2.y = a.y1 + py1;
@@ -909,7 +912,7 @@ static void draw_geo(lv_event_t *e) {
     if (!ap.major && g_range > 50) continue;
     float x, y;
     project(ap.lat, ap.lon, x, y);
-    if (x < 0 || x > MAP_W || y < 0 || y > MAP_H) continue;
+    if (x < 0 || x > g_mw || y < 0 || y > g_mh) continue;
     int cx = a.x1 + (int)x, cy = a.y1 + (int)y;
     lv_area_t ia = {cx - TW / 2, cy - TH + 4, cx - TW / 2 + TW - 1, cy + 3};
     lv_draw_image(layer, &ti, &ia);
@@ -921,8 +924,9 @@ static void draw_geo(lv_event_t *e) {
 
 static void refresh_map() {
   static float geo_range = -1, geo_e = 1e9, geo_n = 1e9;
-  static int geo_mode = -1;
-  if (geo_range != g_range || geo_e != g_pan_e || geo_n != g_pan_n || geo_mode != g_mode) {
+  static int geo_mode = -1, geo_w = -1;
+  if (geo_range != g_range || geo_e != g_pan_e || geo_n != g_pan_n || geo_mode != g_mode || geo_w != g_mw) {
+    geo_w = g_mw;
     geo_range = g_range;
     geo_e = g_pan_e;
     geo_n = g_pan_n;
@@ -931,12 +935,13 @@ static void refresh_map() {
     float hx, hy;  // home position on screen: rings are distance from home
     project(HOME_LAT, HOME_LON, hx, hy);
     for (int r = 0; r < 2; r++) {
-      int rad = RING_PX * (r + 1) / 2;
+      int rad = ring_px() * (r + 1) / 2;
+      lv_obj_set_size(ring_obj[r], rad * 2, rad * 2);
       lv_obj_set_pos(ring_obj[r], (int)hx - rad, (int)hy - rad);
       lv_obj_set_pos(ring_lbl[r], (int)(hx + rad * 0.707f) + 4, (int)(hy + rad * 0.707f) - 4);
     }
     lv_obj_set_pos(home_obj, (int)hx - 4, (int)hy - 4);
-    show(recenter_btn, g_pan_e != 0 || g_pan_n != 0);
+    show(recenter_btn, (g_pan_e != 0 || g_pan_n != 0) && g_mw == MAP_W);
     char b[16];
     for (int r = 0; r < 2; r++) {
       float nm = g_range * (r + 1) / 2;
@@ -1024,6 +1029,9 @@ static void fmt_local(char *b, size_t n, uint32_t t, const char *fmt) {
   struct tm tm;
   localtime_r(&tt, &tm);
   strftime(b, n, fmt, &tm);
+  // drop a leading zero on hours/days: "04:00 PM" -> "4:00 PM", "Oct 05" -> "Oct 5"
+  for (char *c = b; *c; c++)
+    if (*c == '0' && (c == b || c[-1] == ' ') && c[1] >= '0' && c[1] <= '9') memmove(c, c + 1, strlen(c));
 }
 static bool clock_ok() { return time(nullptr) > 1700000000; }
 
@@ -1259,111 +1267,118 @@ static void apply_backlight() {
   }
 }
 
-static void set_stats(const char *const k[3], const char *const v[3]) {
-  for (int i = 0; i < 3; i++) {
-    set_text(idle_k[i], k[i]);
-    set_text(idle_v[i], v[i]);
+static void refresh_all();
+static void set_mode(Mode m);
+
+// Idle dashboard: live map on the left (full height), and a column on the right with
+// the time, open to-dos, the next launch countdown and the next good ISS pass.
+static const int DASH_MAP_W = 520;
+
+static void set_map_full(bool full) {
+  g_mw = full ? DASH_MAP_W : MAP_W;
+  g_mh = full ? 480 : MAP_H;
+  lv_obj_set_pos(scr_map, 0, full ? 0 : BAR_H);
+  lv_obj_set_size(scr_map, 800, g_mh);
+  lv_obj_set_size(map_obj, g_mw, g_mh);
+  lv_obj_set_size(geo, g_mw, g_mh);
+  lv_obj_set_x(north_lbl, g_mw / 2 - 4);
+  lv_obj_set_width(empty_lbl, g_mw);
+  show(bar_obj, !full);
+  show(map_card, !full);
+  for (auto b : zoom_btn) show(b, !full);
+  refresh_all();
+}
+
+static void refresh_idle_tag() {
+  int pos = selected_pos();
+  lv_obj_set_style_text_color(tag_eye, lv_color_hex(MODE_ACCENT[g_mode]), 0);
+  char b[96];
+  if (pos < 0) {
+    set_text(tag_eye, MODE_NAMES[g_mode]);
+    snprintf(b, sizeof b, "%d in view", g_vis_n);
+    set_text(tag_name, b);
+    set_text(tag_line, "");
+  } else if (g_mode == M_PLANES) {
+    const Plane &p = g_pl[g_vis[pos]];
+    set_text(tag_eye, "FOLLOWING");
+    set_text(tag_name, p.flight);
+    xSemaphoreTake(g_mtx, portMAX_DELAY);
+    const Route *rt = find_route(p.flight);
+    Route r = rt ? *rt : Route{};
+    xSemaphoreGive(g_mtx);
+    if (r.st == 1 && route_fits(r, p)) snprintf(b, sizeof b, "%s  " LV_SYMBOL_RIGHT "  %s", r.oc[0] ? r.oc : r.o, r.dc[0] ? r.dc : r.d);
+    else snprintf(b, sizeof b, "%s", p.desc[0] ? p.desc : p.type);
+    set_text(tag_line, b);
+  } else {
+    const Ship &sh = g_sh[g_vis[pos]];
+    set_text(tag_eye, "FOLLOWING");
+    set_text(tag_name, ship_unnamed(sh) ? "Unknown vessel" : sh.name);
+    if (sh.dest[0]) snprintf(b, sizeof b, "%s, bound for %s", sh.kind, sh.dest);
+    else snprintf(b, sizeof b, "%s", sh.kind);
+    set_text(tag_line, b);
   }
 }
 
 static void refresh_idle() {
-  static const char *const NONE[3] = {"", "", ""};
-  char b[96], v0[32], v1[32], v2[32];
-  const char *vals[3] = {v0, v1, v2};
-  lv_obj_set_style_text_color(idle_eye, lv_color_hex(MODE_ACCENT[g_mode]), 0);
-  lv_obj_set_style_text_color(idle_big, lv_color_hex(C_TEXT), 0);
-  if (map_mode()) {
-    rebuild_visible();
-    int pos = selected_pos();
-    if (pos < 0) {
-      set_text(idle_eye, MODE_NAMES[g_mode]);
-      snprintf(b, sizeof b, "%d in view", g_vis_n);
-      set_text(idle_big, b);
-      set_text(idle_sub, "");
-      set_text(idle_line, "");
-      set_stats(NONE, NONE);
-    } else if (g_mode == M_PLANES) {
-      const Plane &p = g_pl[g_vis[pos]];
-      set_text(idle_eye, "FOLLOWING");
-      set_text(idle_big, p.flight);
-      xSemaphoreTake(g_mtx, portMAX_DELAY);
-      const Route *rt = find_route(p.flight);
-      Route r = rt ? *rt : Route{};
-      xSemaphoreGive(g_mtx);
-      const char *type = p.desc[0] ? p.desc : p.type;
-      if (r.st == 1 && r.airline[0]) snprintf(b, sizeof b, "%s, %s", r.airline, type);
-      else snprintf(b, sizeof b, "%s", type);
-      set_text(idle_sub, b);
-      if (r.st == 1 && route_fits(r, p)) snprintf(b, sizeof b, "%s  " LV_SYMBOL_RIGHT "  %s", r.oc[0] ? r.oc : r.o, r.dc[0] ? r.dc : r.d);
-      else b[0] = 0;
-      set_text(idle_line, b);
-      static const char *const K[3] = {"ALTITUDE", "SPEED", "DISTANCE"};
-      snprintf(v0, 32, "%d ft", p.alt);
-      snprintf(v1, 32, "%d kt", (int)p.gs);
-      snprintf(v2, 32, "%.1f nm", p.dist_nm);
-      set_stats(K, vals);
-    } else {
-      const Ship &sh = g_sh[g_vis[pos]];
-      set_text(idle_eye, "FOLLOWING");
-      set_text(idle_big, ship_unnamed(sh) ? "Unknown vessel" : sh.name);
-      if (sh.len > 0) snprintf(b, sizeof b, "%s, %d m", sh.kind, sh.len);
-      else snprintf(b, sizeof b, "%s", sh.kind);
-      set_text(idle_sub, b);
-      if (sh.dest[0]) snprintf(b, sizeof b, "Bound for %s", sh.dest);
-      else b[0] = 0;
-      set_text(idle_line, b);
-      static const char *const K[3] = {"SPEED", "COURSE", "DISTANCE"};
-      snprintf(v0, 32, "%.1f kn", sh.sog);
-      snprintf(v1, 32, "%d deg", (int)sh.cog);
-      snprintf(v2, 32, "%.1f nm", sh.dist_nm);
-      set_stats(K, vals);
-    }
-  } else if (g_mode == M_SPACE) {
-    long now = time(nullptr);
-    int first = 0;
-    while (first < g_sp.n && clock_ok() && (long)g_sp.l[first].t < now - 3600) first++;
-    set_text(idle_eye, "NEXT LAUNCH");
-    if (first < g_sp.n && clock_ok()) {
-      const Launch &l = g_sp.l[first];
-      fmt_countdown(b, sizeof b, (long)l.t - now);
-      set_text(idle_big, b);
-      lv_obj_set_style_text_color(idle_big, lv_color_hex(C_SPACE), 0);
-      snprintf(b, sizeof b, "%s, %s", l.rocket, l.name);
-      set_text(idle_sub, b);
-      set_text(idle_line, l.visible ? "May be visible from home: look northwest" : l.loc);
-    } else {
-      set_text(idle_big, "--");
-      set_text(idle_sub, "");
-      set_text(idle_line, "");
-    }
-    if (g_sp.pass_ok && clock_ok()) {
-      static const char *const K[3] = {"ISS NEXT PASS", "", ""};
-      fmt_local(v0, 32, g_sp.pass_t, "%a %I:%M %p");
-      v1[0] = v2[0] = 0;
-      set_stats(K, vals);
-    } else {
-      set_stats(NONE, NONE);
-    }
+  char b[96];
+  refresh_idle_tag();
+  // time + date
+  if (clock_ok()) {
+    fmt_local(b, sizeof b, time(nullptr), "%I:%M %p");
+    set_text(dash_time, b);
+    fmt_local(b, sizeof b, time(nullptr), "%A, %b %d");
+    set_text(dash_date, b);
   } else {
-    int left = 0, next = -1;
-    for (int i = 0; i < g_td_n; i++)
-      if (!g_td[i].done) { left++; if (next < 0) next = i; }
-    set_text(idle_eye, "TO-DO");
-    snprintf(b, sizeof b, left ? "%d left" : "All done", left);
-    set_text(idle_big, b);
-    set_text(idle_sub, "");
-    if (next >= 0) snprintf(b, sizeof b, "Next: %s", g_td[next].text);
-    else b[0] = 0;
-    set_text(idle_line, b);
-    set_stats(NONE, NONE);
+    set_text(dash_time, "--:--");
+    set_text(dash_date, "");
   }
-  if (clock_ok()) fmt_local(b, sizeof b, time(nullptr), "%I:%M %p        TOUCH TO WAKE");
-  else snprintf(b, sizeof b, "TOUCH TO WAKE");
-  set_text(idle_foot, b[0] == '0' ? b + 1 : b);  // "09:41" -> "9:41"
+  // to-dos: count + first open items
+  int left = 0;
+  for (int i = 0; i < g_td_n; i++) left += !g_td[i].done;
+  snprintf(b, sizeof b, left ? "%d LEFT" : "", left);
+  set_text(dash_td_count, b);
+  int shown = 0;
+  for (int i = 0; i < g_td_n && shown < 4; i++) {
+    if (g_td[i].done) continue;
+    set_text(dash_td[shown++], g_td[i].text);
+  }
+  if (!left) set_text(dash_td[shown++], g_td_loaded ? "All done" : "...");
+  while (shown < 4) set_text(dash_td[shown++], "");
+  // next launch
+  long now = time(nullptr);
+  int first = 0;
+  while (first < g_sp.n && clock_ok() && (long)g_sp.l[first].t < now - 3600) first++;
+  if (first < g_sp.n && clock_ok()) {
+    const Launch &l = g_sp.l[first];
+    fmt_countdown(b, sizeof b, (long)l.t - now);
+    set_text(dash_l_count, b);
+    snprintf(b, sizeof b, "%s, %s", l.rocket, l.name);
+    set_text(dash_l_name, b);
+    set_text(dash_l_vis, l.visible ? "Visible from home, look NW" : l.loc);
+  } else {
+    set_text(dash_l_count, "--");
+    set_text(dash_l_name, "");
+    set_text(dash_l_vis, "");
+  }
+  // ISS pass
+  if (g_sp.pass_ok && clock_ok()) {
+    fmt_local(b, sizeof b, g_sp.pass_t, "%a %I:%M %p");
+    set_text(dash_iss_when, b);
+    snprintf(b, sizeof b, "%d min, %d deg high, %s to %s", g_sp.pass_dur, g_sp.pass_el, g_sp.from, g_sp.to);
+    set_text(dash_iss_info, b);
+  } else {
+    set_text(dash_iss_when, "--");
+    set_text(dash_iss_info, "");
+  }
 }
+
+static Mode g_mode_before_idle = M_PLANES;
 
 static void go_idle() {
   g_idle = true;
+  g_mode_before_idle = g_mode;
+  if (!map_mode()) g_mode = M_PLANES;  // the dashboard map shows planes unless you were on Ships
+  set_map_full(true);
   refresh_idle();
   show(idle_ov, true);
   apply_backlight();
@@ -1373,28 +1388,70 @@ static void wake() {
   g_idle = false;
   g_last_touch = millis();
   show(idle_ov, false);
+  set_map_full(false);
+  set_mode(g_mode_before_idle);
   apply_backlight();
 }
 
 static void on_idle_press(lv_event_t *) { wake(); }
 
+static lv_obj_t *dash_eye(lv_obj_t *p, const char *t, uint32_t col, int y) {
+  lv_obj_t *l = mk_label(p, t, &lv_font_montserrat_12, col, 20, y);
+  lv_obj_set_style_text_letter_space(l, 1, 0);
+  return l;
+}
+static void dash_rule(lv_obj_t *p, int y) {
+  lv_obj_t *r = mk_box(p, 20, y, 240, 1);
+  lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(r, lv_color_hex(C_LINE), 0);
+}
+
 static void build_idle() {
+  // transparent full-screen catcher: swallows the waking touch, lets the map show through
   idle_ov = mk_box(lv_layer_top(), 0, 0, 800, 480);
-  lv_obj_set_style_bg_opa(idle_ov, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(idle_ov, lv_color_hex(0x070c18), 0);
-  lv_obj_add_flag(idle_ov, LV_OBJ_FLAG_CLICKABLE);  // swallows the waking touch
+  lv_obj_add_flag(idle_ov, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(idle_ov, on_idle_press, LV_EVENT_PRESSED, nullptr);
-  idle_eye = mk_label(idle_ov, "", &lv_font_montserrat_16, C_AMBER, 44, 40);
-  lv_obj_set_style_text_letter_space(idle_eye, 2, 0);
-  idle_big = mk_dot_label(idle_ov, &lv_font_montserrat_48, C_TEXT, 44, 66, 712);
-  idle_sub = mk_dot_label(idle_ov, &lv_font_montserrat_24, C_MUTED, 44, 128, 712);
-  idle_line = mk_dot_label(idle_ov, &lv_font_montserrat_40, C_TEXT, 44, 172, 712);
-  for (int i = 0; i < 3; i++) {
-    idle_k[i] = mk_label(idle_ov, "", &lv_font_montserrat_16, C_MUTED, 44 + i * 240, 262);
-    idle_v[i] = mk_label(idle_ov, "", &lv_font_montserrat_40, C_TEXT, 44 + i * 240, 286);
-  }
-  idle_foot = mk_label(idle_ov, "", &lv_font_montserrat_16, C_DIM, 44, 430);
-  lv_obj_set_style_text_letter_space(idle_foot, 1, 0);
+
+  // "following" tag over the map, bottom left
+  idle_tag = mk_box(idle_ov, 12, 400, DASH_MAP_W - 24, 68);
+  lv_obj_set_style_bg_opa(idle_tag, LV_OPA_80, 0);
+  lv_obj_set_style_bg_color(idle_tag, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_radius(idle_tag, 10, 0);
+  lv_obj_set_style_border_width(idle_tag, 1, 0);
+  lv_obj_set_style_border_color(idle_tag, lv_color_hex(C_LINE), 0);
+  lv_obj_remove_flag(idle_tag, LV_OBJ_FLAG_CLICKABLE);
+  tag_eye = mk_label(idle_tag, "", &lv_font_montserrat_12, C_AMBER, 14, 8);
+  lv_obj_set_style_text_letter_space(tag_eye, 1, 0);
+  tag_name = mk_dot_label(idle_tag, &lv_font_montserrat_20, C_TEXT, 14, 22, DASH_MAP_W - 52);
+  tag_line = mk_dot_label(idle_tag, &lv_font_montserrat_16, C_MUTED, 14, 44, DASH_MAP_W - 52);
+
+  // right column
+  lv_obj_t *col = mk_box(idle_ov, DASH_MAP_W, 0, 800 - DASH_MAP_W, 480);
+  lv_obj_set_style_bg_opa(col, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(col, lv_color_hex(0x070c18), 0);
+  lv_obj_set_style_border_width(col, 1, 0);
+  lv_obj_set_style_border_side(col, LV_BORDER_SIDE_LEFT, 0);
+  lv_obj_set_style_border_color(col, lv_color_hex(C_LINE), 0);
+  lv_obj_remove_flag(col, LV_OBJ_FLAG_CLICKABLE);
+  dash_time = mk_label(col, "", &lv_font_montserrat_48, C_TEXT, 20, 18);
+  dash_date = mk_label(col, "", &lv_font_montserrat_16, C_MUTED, 22, 74);
+  dash_rule(col, 104);
+  dash_eye(col, "TO-DO", C_TODO, 118);
+  dash_td_count = mk_label(col, "", &lv_font_montserrat_12, C_MUTED, 0, 118);
+  lv_obj_set_width(dash_td_count, 260);
+  lv_obj_set_style_text_align(dash_td_count, LV_TEXT_ALIGN_RIGHT, 0);
+  for (int i = 0; i < 4; i++) dash_td[i] = mk_dot_label(col, &lv_font_montserrat_16, C_TEXT, 20, 140 + i * 25, 240);
+  dash_rule(col, 250);
+  dash_eye(col, "NEXT LAUNCH", C_SPACE, 264);
+  dash_l_count = mk_label(col, "", &lv_font_montserrat_24, C_SPACE, 20, 282);
+  dash_l_name = mk_dot_label(col, &lv_font_montserrat_12, C_MUTED, 20, 314, 240);
+  dash_l_vis = mk_dot_label(col, &lv_font_montserrat_12, C_SPACE, 20, 332, 240);
+  dash_rule(col, 358);
+  dash_eye(col, "ISS NEXT GOOD PASS", C_MUTED, 372);
+  dash_iss_when = mk_label(col, "", &lv_font_montserrat_24, C_TEXT, 20, 390);
+  dash_iss_info = mk_dot_label(col, &lv_font_montserrat_12, C_MUTED, 20, 422, 240);
+  mk_label(col, "TOUCH TO WAKE", &lv_font_montserrat_12, C_DIM, 20, 452);
+
   lv_obj_add_flag(idle_ov, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1516,7 +1573,7 @@ static void on_map_press(lv_event_t *e) {
   if (moved < 10) return;  // small jitter is still a tap
   g_dragging = true;
   g_lite_map = true;
-  float ppn = RING_PX / g_range;
+  float ppn = ring_px() / g_range;
   g_pan_e -= v.x / ppn;
   g_pan_n += v.y / ppn;
   clamp_pan();
@@ -1584,7 +1641,7 @@ static void build_map_screen(lv_obj_t *scr) {
   lv_obj_add_event_cb(geo, draw_geo, LV_EVENT_DRAW_MAIN, nullptr);
   // range rings around home, with scale labels
   for (int r = 1; r <= 2; r++) {
-    int rad = RING_PX * r / 2;
+    int rad = ring_px() * r / 2;
     lv_obj_t *ring = ring_obj[r - 1] = mk_box(map_obj, MAP_W / 2 - rad, MAP_H / 2 - rad, rad * 2, rad * 2);
     lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(ring, 1, 0);
@@ -1600,7 +1657,7 @@ static void build_map_screen(lv_obj_t *scr) {
   lv_obj_set_style_bg_opa(home_obj, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(home_obj, lv_color_hex(0x7fa8e8), 0);
   lv_obj_remove_flag(home_obj, LV_OBJ_FLAG_CLICKABLE);
-  mk_label(map_obj, "N", &lv_font_montserrat_12, C_DIM, MAP_W / 2 - 4, 4);
+  north_lbl = mk_label(map_obj, "N", &lv_font_montserrat_12, C_DIM, MAP_W / 2 - 4, 4);
 
   for (int i = 0; i < MAXP; i++) {
     mk[i] = mk_box(map_obj, 0, 0, 36, 36);
@@ -1626,10 +1683,10 @@ static void build_map_screen(lv_obj_t *scr) {
   lv_obj_set_style_text_align(empty_lbl, LV_TEXT_ALIGN_CENTER, 0);
   recenter_btn = mk_btn(map_obj, LV_SYMBOL_HOME, 14, MAP_H - 138, 44, 38, on_recenter, nullptr);
   lv_obj_add_flag(recenter_btn, LV_OBJ_FLAG_HIDDEN);
-  mk_btn(map_obj, "+", 14, MAP_H - 94, 44, 38, on_zoom, (void *)(intptr_t)-1);  // zoom in = smaller range
-  mk_btn(map_obj, "-", 14, MAP_H - 50, 44, 38, on_zoom, (void *)(intptr_t)1);
+  zoom_btn[0] = mk_btn(map_obj, "+", 14, MAP_H - 94, 44, 38, on_zoom, (void *)(intptr_t)-1);  // zoom in = smaller range
+  zoom_btn[1] = mk_btn(map_obj, "-", 14, MAP_H - 50, 44, 38, on_zoom, (void *)(intptr_t)1);
 
-  lv_obj_t *card = mk_card(scr_map, MAP_W, 800 - MAP_W);
+  lv_obj_t *card = map_card = mk_card(scr_map, MAP_W, 800 - MAP_W);
   c_eye = mk_label(card, "", &lv_font_montserrat_12, C_MUTED, 20, 18);
   c_tag = mk_label(card, "", &lv_font_montserrat_12, C_AMBER, 170, 18);
   c_call = mk_dot_label(card, &lv_font_montserrat_40, C_TEXT, 20, 40, 270);
@@ -1706,7 +1763,7 @@ static void build_ui() {
   lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
   // top bar
-  lv_obj_t *bar = mk_box(scr, 0, 0, 800, BAR_H);
+  lv_obj_t *bar = bar_obj = mk_box(scr, 0, 0, 800, BAR_H);
   lv_obj_set_style_border_width(bar, 1, 0);
   lv_obj_set_style_border_side(bar, LV_BORDER_SIDE_BOTTOM, 0);
   lv_obj_set_style_border_color(bar, lv_color_hex(C_LINE), 0);
