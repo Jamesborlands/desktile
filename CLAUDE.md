@@ -18,6 +18,10 @@ Owner: James, San Diego. He prefers direct, concise answers and no em dashes in 
 - [x] Firmware screens for Ships / Space / To-do flashed (Oct 10). Planes + Ships share the map (pan, pinch, tap-nearest). To-do check-offs POST to the Worker. MCP connector added in claude.ai as "Desktile". Verified working by James (Oct 10 night).
 - [ ] Pick up here: (1) confirm plane/ship name tags now show (moved labels from the marker box onto the map, flashed but not yet seen); (2) knobs when the Adafruit order arrives (Step 2: I2C read, fix 0x36/0x37 clash, map to app_input(), hide the on-screen arrow/SAVE buttons when knobs are detected). Icons (sources in `design/icons/`, made in Quiver): planes by class (airliner, fighter, military cargo, business jet, small prop, military/civil helicopter) from adsb.lol mil flag + ADS-B category + type code; ships by AIS type (sailboat, cargo, tanker, cruise, navy, fishing, tug, yacht), side views mirrored when heading west; airports = control tower; selection = amber tint only. Generator scripts are in `firmware/skytile/tools/` (svgraster.py renders the SVGs, icons2c.py / tower2c.py make LVGL images, mapgen.py builds mapdata.h from OSM coastline + Natural Earth border).
 
+## Repo
+- GitHub (private): https://github.com/Jamesborlands/desktile, branch `main`.
+- Not committed: `firmware/skytile/include/secrets.h` (copy from `secrets.example.h`), `worker/.dev.vars`, `vendor/` (Elecrow clone), build output.
+
 ## Hardware
 - **Display:** Elecrow CrowPanel Advance 5.0" HMI, ESP32-S3, 800x480 IPS, capacitive touch (Amazon set "5" Advanced ESP32 Display with Acrylic Case"; the acrylic case is unused). Built-in WiFi/BLE. The optional plug-in wireless module is not needed.
   - Pin maps, display driver setup, LVGL config and examples: Elecrow's repo `github.com/Elecrow-RD/CrowPanel-Advance-5-HMI-ESP32-S3-AI-Powered-IPS-Touch-Screen-800x480` and the Elecrow wiki page "CrowPanel Advance 5.0-HMI ESP32 AI Display". Pull pins from there. Don't guess them.
