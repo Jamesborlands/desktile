@@ -1,0 +1,151 @@
+<title>SkyTile Build Parts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column parts ledger, grouped by build phase, running total pinned at top. Palette from aeronautical sectional charts: navy ink, chart magenta, airspace blue. */
+:root{
+  --bg:#f3f5f8; --surface:#ffffff; --ink:#14213a; --muted:#5b6679; --line:#d8dde6;
+  --accent:#a3166e; --accent-soft:#f6e3ef; --blue:#2a5ea8; --blue-soft:#e3ecf8; --done:#9aa3b2;
+  --display:"Archivo","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e1524; --surface:#161f31; --ink:#e6ebf3; --muted:#9aa6ba; --line:#2a3550;
+  --accent:#ec6bb6; --accent-soft:#3a1a30; --blue:#7fa8e8; --blue-soft:#1a2a45; --done:#5d6880; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e1524; --surface:#161f31; --ink:#e6ebf3; --muted:#9aa6ba; --line:#2a3550;
+  --accent:#ec6bb6; --accent-soft:#3a1a30; --blue:#7fa8e8; --blue-soft:#1a2a45; --done:#5d6880; color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.5}
+.wrap{max-width:760px;margin:0 auto;padding-inline:16px;padding-block:28px 56px;display:flex;flex-direction:column;gap:28px}
+header{display:flex;flex-direction:column;gap:10px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font-family:var(--display);font-stretch:80%;font-weight:800;font-size:clamp(34px,8vw,52px);line-height:1;margin:0;text-wrap:balance}
+.lede{margin:0;color:var(--muted);max-width:62ch}
+.freqs{display:flex;flex-wrap:wrap;gap:8px}
+.freq{font-family:var(--mono);font-size:12px;padding:3px 8px;border:1px solid var(--line);border-radius:4px;color:var(--muted)}
+.freq b{color:var(--ink);font-weight:500}
+.total{position:sticky;top:env(safe-area-inset-top,0px);z-index:2;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 16px;display:flex;flex-wrap:wrap;gap:6px 24px;align-items:baseline;box-shadow:0 2px 10px rgba(20,33,58,.06)}
+.total .k{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.total .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:18px;font-weight:500}
+.total .v.big{color:var(--accent)}
+.stat{display:flex;flex-direction:column}
+section{display:flex;flex-direction:column;gap:12px}
+.phase{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 12px;border-bottom:2px solid var(--ink);padding-bottom:6px}
+h2{font-family:var(--display);font-stretch:85%;font-weight:700;font-size:24px;margin:0}
+.phase .sub{font-size:13px;color:var(--muted)}
+.phase .sum{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px}
+ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+li{display:grid;grid-template-columns:28px 1fr auto;gap:4px 12px;padding:14px 0;border-bottom:1px solid var(--line);align-items:start}
+li input{width:20px;height:20px;margin:2px 0 0;accent-color:var(--accent);cursor:pointer}
+li input:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.item{min-width:0;display:flex;flex-direction:column;gap:4px}
+.name{font-weight:600}
+.note{font-size:13.5px;color:var(--muted)}
+.links{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.links a{font-size:12.5px;font-weight:500;text-decoration:none;color:var(--blue);background:var(--blue-soft);padding:3px 9px;border-radius:4px}
+.links a.amz{color:var(--accent);background:var(--accent-soft)}
+.links a:hover,.links a:focus-visible{text-decoration:underline}
+.price{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.price small{display:block;color:var(--muted);font-size:11.5px}
+li.got .name,li.got .price{color:var(--done);text-decoration:line-through}
+.tag{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--blue);border:1px solid currentColor;border-radius:3px;padding:0 5px;margin-left:6px;vertical-align:2px;font-weight:500}
+.notes{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
+.notes h3{font-family:var(--display);font-stretch:85%;font-size:18px;margin:0 0 8px}
+.notes ul{gap:8px}
+.notes li{display:block;border:0;padding:0 0 0 14px;position:relative;font-size:14px}
+.notes li::before{content:"";position:absolute;left:0;top:.6em;width:6px;height:6px;background:var(--accent);border-radius:1px}
+.fine{font-size:12.5px;color:var(--muted);margin:0}
+@media (max-width:480px){li{grid-template-columns:26px 1fr}.price{grid-column:2;text-align:left}.price small{display:inline;margin-left:6px}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Parts list · DIY SkyTile</div>
+    <h1>SkyTile Build Parts</h1>
+    <p class="lede">A 5-inch color tile with two clicky knobs that tracks planes, ships, space launches and your to-do list. Phase 1 works on its own using free internet feeds. Phase 2 adds your own radios so the tile hears planes and ships directly.</p>
+    <div class="freqs">
+      <span class="freq">ADS-B <b>1090 MHz</b></span>
+      <span class="freq">AIS <b>161.975 / 162.025 MHz</b></span>
+      <span class="freq">Modes <b>Planes · Ships · Space · To-do</b></span>
+    </div>
+  </header>
+
+  <div class="total" aria-live="polite">
+    <div class="stat"><span class="k">Phase 1</span><span class="v" id="t1">$0</span></div>
+    <div class="stat"><span class="k">Phase 2</span><span class="v" id="t2">$0</span></div>
+    <div class="stat"><span class="k">Full build</span><span class="v big" id="tall">$0</span></div>
+    <div class="stat"><span class="k">Still to buy</span><span class="v" id="tleft">$0</span></div>
+  </div>
+
+  <section data-phase="1">
+    <div class="phase"><h2>Phase 1 · The tile</h2><span class="sum" data-sum="1"></span><span class="sub" style="flex-basis:100%">Screen, knobs and printed case. Runs on adsb.lol, aisstream.io and Launch Library over WiFi.</span></div>
+    <ul>
+      <li data-price="55.99" data-id="crowpanel"><input type="checkbox" id="c-crowpanel" aria-label="Got CrowPanel"><div class="item"><span class="name">Elecrow CrowPanel Advance 5" ESP32-S3 <span class="tag">in Amazon cart</span></span><span class="note">800×480 IPS, capacitive touch, built-in I2C port for the knobs. Arrives tomorrow. Its included Grove-to-jumper cable is reused for the knobs.</span><span class="links"><a class="amz" href="https://www.amazon.com/dp/B0FX59YQGX">Amazon</a></span></div><div class="price">$55.99</div></li>
+      <li data-price="15.90" data-id="qtenc"><input type="checkbox" id="c-qtenc" aria-label="Got encoder boards"><div class="item"><span class="name">Adafruit I2C QT Rotary Encoder, encoder pre-soldered ×2 <span class="tag">in Adafruit cart</span></span><span class="note">PEC11 encoder with push switch, 24 detents, already soldered on. No iron needed. The second board's I2C address gets changed in software on first boot.</span><span class="links"><a href="https://www.adafruit.com/product/5880">Adafruit #5880</a></span></div><div class="price">$15.90<small>2 × $7.95</small></div></li>
+      <li data-price="6.09" data-id="nuts"><input type="checkbox" id="c-nuts" aria-label="Got nuts"><div class="item"><span class="name">M7 × 0.75 hex nuts, 25-pack <span class="tag">in Amazon cart</span></span><span class="note">Clamps each encoder through the case's knob holes. The pre-soldered boards don't include panel nuts.</span><span class="links"><a class="amz" href="https://www.amazon.com/s?k=PATIKIL+M7x0.75+hex+nuts">Amazon</a></span></div><div class="price">$6.09</div></li>
+      <li data-price="1.90" data-id="cables"><input type="checkbox" id="c-cables" aria-label="Got cables"><div class="item"><span class="name">QT-to-male-header cable + QT cable <span class="tag">in Adafruit cart</span></span><span class="note">The panel's Grove cable plugs onto the male headers, then a short QT cable chains knob to knob. Adafruit's Grove-to-QT cable is out of stock, so this route needs no sanding.</span><span class="links"><a href="https://www.adafruit.com/product/4209">#4209</a><a href="https://www.adafruit.com/product/4210">#4210</a></span></div><div class="price">$1.90</div></li>
+      <li data-price="9.99" data-id="knobs"><input type="checkbox" id="c-knobs" aria-label="Got knobs"><div class="item"><span class="name">Taiss black aluminum knobs ×2, 20 mm <span class="tag">in Amazon cart</span></span><span class="note">Knurled grip, set screw for the 6 mm D-shaft.</span><span class="links"><a class="amz" href="https://www.amazon.com/dp/B07FVLVB55">Amazon</a></span></div><div class="price">$9.99</div></li>
+      <li data-price="9.99" data-id="usbc"><input type="checkbox" id="c-usbc" aria-label="Got cable"><div class="item"><span class="name">Anker right-angle USB-C cable, 6 ft (2-pack) <span class="tag">in Amazon cart</span></span><span class="note">The panel's USB-C port faces backward, so a 90° plug is what fits inside the case.</span><span class="links"><a class="amz" href="https://www.amazon.com/dp/B0CFZRYFZB">Amazon</a></span></div><div class="price">$9.99</div></li>
+      <li data-price="8.99" data-id="screws"><input type="checkbox" id="c-screws" aria-label="Got screws"><div class="item"><span class="name">Self-tapping screw kit, M2/M3/M4 <span class="tag">in Amazon cart</span></span><span class="note">M3 × 6 for the panel, M3 × 8 for the back cover.</span><span class="links"><a class="amz" href="https://www.amazon.com/dp/B0G4L68WHY">Amazon</a></span></div><div class="price">$8.99</div></li>
+      <li data-price="30" data-id="case"><input type="checkbox" id="c-case" aria-label="Got case"><div class="item"><span class="name">3D-printed desk case <span class="tag">custom</span></span><span class="note">Two parts: front shell and back cover, 15° lean, knobs on the right. Upload the STLs to a print service in PETG or PLA.</span><span class="links"><a href="https://jlc3dp.com">JLC3DP</a><a href="https://craftcloud3d.com">Craftcloud</a></span></div><div class="price">~$30<small>estimate</small></div></li>
+    </ul>
+  </section>
+
+  <section data-phase="2">
+    <div class="phase"><h2>Phase 2 · Your own radios</h2><span class="sum" data-sum="2"></span><span class="sub" style="flex-basis:100%">A Raspberry Pi decodes planes and ships and serves one clean feed to the tile. Optional, add any time.</span></div>
+    <ul>
+      <li data-price="35" data-id="pi"><input type="checkbox" id="c-pi" aria-label="Got Pi"><div class="item"><span class="name">Raspberry Pi 4, 1 GB</span><span class="note">Plenty for both decoders. The 2 GB model jumped to $67.50 this week, so skip it. Buy from an official reseller; Amazon listings are usually marked up.</span><span class="links"><a href="https://www.pishop.us/product-category/raspberry-pi/">PiShop.us</a><a href="https://www.adafruit.com/category/105">Adafruit</a></span></div><div class="price">$35</div></li>
+      <li data-price="8" data-id="psu"><input type="checkbox" id="c-psu" aria-label="Got power supply"><div class="item"><span class="name">Official Pi 4 USB-C power supply (5 V 3 A)</span><span class="note">Two radio dongles draw real current, so use the official supply rather than a phone charger.</span><span class="links"><a href="https://www.pishop.us/?s=power+supply+pi+4">PiShop.us</a></span></div><div class="price">~$8</div></li>
+      <li data-price="9" data-id="sd"><input type="checkbox" id="c-sd" aria-label="Got microSD"><div class="item"><span class="name">microSD card, 32 GB, A1 or better</span><span class="links"><a class="amz" href="https://www.amazon.com/s?k=sandisk+32gb+microsd+a1">Amazon search</a></span></div><div class="price">~$9</div></li>
+      <li data-price="46" data-id="prostick"><input type="checkbox" id="c-prostick" aria-label="Got Pro Stick Plus"><div class="item"><span class="name">FlightAware Pro Stick Plus <span class="tag">planes</span></span><span class="note">Receiver with a built-in 1090 MHz filter and amplifier. Worth it with SAN and Miramar nearby.</span><span class="links"><a class="amz" href="https://www.amazon.com/dp/B01M7REJJW">Amazon</a><a href="https://flightaware.store/products/pro-stick-plus">FlightAware store</a></span></div><div class="price">~$46</div></li>
+      <li data-price="48" data-id="adsbant"><input type="checkbox" id="c-adsbant" aria-label="Got ADS-B antenna"><div class="item"><span class="name">FlightAware 1090 MHz antenna, 26 in <span class="tag">planes</span></span><span class="note">Genuine FlightAware part FA-ANT-1090-AG-1, with mounting bracket. Has an N-type connector, so it needs the cable below.</span><span class="links"><a class="amz" href="https://www.amazon.com/dp/B00WZL6WPO">Amazon</a></span></div><div class="price">~$48</div></li>
+      <li data-price="15" data-id="coax"><input type="checkbox" id="c-coax" aria-label="Got coax"><div class="item"><span class="name">N-male to SMA-male coax, 10 to 25 ft</span><span class="note">Keep it as short as your mounting spot allows. LMR-240 loses less signal than RG-58.</span><span class="links"><a class="amz" href="https://www.amazon.com/s?k=N+male+to+SMA+male+LMR240+cable">Amazon search</a></span></div><div class="price">~$15</div></li>
+      <li data-price="40" data-id="rtlsdr"><input type="checkbox" id="c-rtlsdr" aria-label="Got RTL-SDR kit"><div class="item"><span class="name">RTL-SDR Blog V3 with dipole antenna kit <span class="tag">ships</span></span><span class="note">Second receiver for AIS. Extend each dipole leg to about 43 cm (17 in) for 162 MHz. The V4 is discontinued, and the V3 does AIS just as well.</span><span class="links"><a class="amz" href="https://www.amazon.com/dp/B0BMKB3L47">Amazon</a></span></div><div class="price">~$40</div></li>
+    </ul>
+  </section>
+
+  <div class="notes">
+    <h3>Before you order</h3>
+    <ul>
+      <li>Prices are approximate as of Oct 2, 2026. Check each listing before buying.</li>
+      <li>Start with Phase 1. The tile code reads one data URL, so moving to your own radios later is a config change, not a rewrite.</li>
+      <li>Outdoor ship antenna upgrade for later: a marine VHF antenna tuned for 162 MHz (Shakespeare 5101 is a common pick). Height and a clear view of the water matter more than the antenna itself.</li>
+      <li>Feed your plane data to FlightAware once Phase 2 is running and they give you a free premium account.</li>
+      <li>To-do mode needs no parts. Tasks live in a free Cloudflare Worker that Claude can add to and check off.</li>
+      <li>No soldering anywhere. Everything plugs together or screws in.</li>
+    </ul>
+  </div>
+  <p class="fine">Tick items as they arrive. Checkmarks are saved in this browser only.</p>
+</div>
+
+<script>
+(function(){
+  var KEY='skytile-parts-v1', saved={};
+  try{saved=JSON.parse(localStorage.getItem(KEY)||'{}')||{}}catch(e){saved={}}
+  var items=[].slice.call(document.querySelectorAll('li[data-price]'));
+  function fmt(n){return '$'+Math.round(n).toLocaleString('en-US')}
+  function update(){
+    var t={1:0,2:0},left=0;
+    items.forEach(function(li){
+      var p=parseFloat(li.dataset.price),ph=li.closest('section').dataset.phase,cb=li.querySelector('input');
+      t[ph]+=p; li.classList.toggle('got',cb.checked); if(!cb.checked)left+=p;
+    });
+    document.getElementById('t1').textContent=fmt(t[1]);
+    document.getElementById('t2').textContent=fmt(t[2]);
+    document.getElementById('tall').textContent=fmt(t[1]+t[2]);
+    document.getElementById('tleft').textContent=fmt(left);
+    document.querySelector('[data-sum="1"]').textContent='≈ '+fmt(t[1]);
+    document.querySelector('[data-sum="2"]').textContent='≈ '+fmt(t[2]);
+  }
+  items.forEach(function(li){
+    var cb=li.querySelector('input'); cb.checked=!!saved[li.dataset.id];
+    cb.addEventListener('change',function(){
+      saved[li.dataset.id]=cb.checked;
+      try{localStorage.setItem(KEY,JSON.stringify(saved))}catch(e){}
+      update();
+    });
+  });
+  update();
+})();
+</script>

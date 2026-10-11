@@ -1,0 +1,19 @@
+{
+  "name": "skytile-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "agents": "^0.28.0",
+    "satellite.js": "^7.1.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "wrangler": "^4.149.0"
+  }
+}

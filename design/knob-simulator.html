@@ -1,0 +1,470 @@
+<title>SkyTile Knob Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: device on the left at real proportions, live control cards on the right; stacks on phones. Device and its screen keep fixed physical colors; page chrome follows theme. */
+:root{
+  --bg:#e6e8eb; --panel:#ffffff; --ink:#1b2130; --muted:#566173; --line:#d3d8df;
+  --accent:#2a5ea8; --btn:#f4f6f8; --btn-hover:#e9edf2; --chip:#eef2f7;
+  --sans:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#14171c; --panel:#1d2128; --ink:#e7ebf1; --muted:#9aa5b5; --line:#2e343e;
+  --accent:#7fa8e8; --btn:#252a33; --btn-hover:#2e3440; --chip:#262c36; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#14171c; --panel:#1d2128; --ink:#e7ebf1; --muted:#9aa5b5; --line:#2e343e;
+  --accent:#7fa8e8; --btn:#252a33; --btn-hover:#2e3440; --chip:#262c36; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.45}
+.wrap{max-width:1240px;margin:0 auto;padding-inline:16px;padding-block:24px 40px;display:flex;flex-direction:column;gap:20px}
+header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between}
+h1{margin:0;font-size:30px;font-weight:700;line-height:1.05;text-wrap:balance}
+.sub{margin:4px 0 0;color:var(--muted);max-width:62ch}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;padding:3px;background:var(--panel);gap:3px}
+.seg button{font:600 15px var(--sans);color:var(--muted);background:transparent;border:0;border-radius:7px;padding:0 16px;min-height:40px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.seg button:focus-visible,.cbtn:focus-visible,.zb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.main{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:20px;align-items:start}
+@media (max-width:920px){.main{grid-template-columns:minmax(0,1fr)}}
+.left{min-width:0;display:flex;flex-direction:column;gap:14px}
+.stagebox{position:relative;width:100%;border-radius:14px;background:linear-gradient(180deg,#cdd1d6 0%,#c3c8ce 62%,#6d4d36 62%,#5e412d 100%);overflow:hidden}
+.stage{position:absolute;left:0;top:0;transform-origin:0 0}
+.device{position:absolute;left:0;top:0;width:1271px;height:684px}
+.case{position:absolute;inset:0;border-radius:26px;background:var(--case,#24272d);transition:background .3s;box-shadow:inset 0 3px 0 rgba(255,255,255,.10),inset 0 -12px 22px rgba(0,0,0,.3),0 30px 50px rgba(10,14,22,.35)}
+.win{position:absolute;left:97px;top:66px;width:822px;height:504px;border-radius:8px;background:#050608;box-shadow:0 0 0 3px rgba(0,0,0,.35),inset 0 2px 5px rgba(0,0,0,.8)}
+.screen{position:absolute;left:11px;top:12px;width:800px;height:480px;overflow:hidden;background:#0a1220;color:#e8edf5;font-family:var(--sans)}
+.glare{position:absolute;left:11px;top:12px;width:800px;height:480px;pointer-events:none;background:linear-gradient(115deg,rgba(255,255,255,.07) 0%,rgba(255,255,255,0) 38%)}
+.engrave{position:absolute;font:600 15px var(--mono);letter-spacing:.14em;color:var(--engrave,rgba(255,255,255,.28));transform:translateX(-50%)}
+.knob{position:absolute;border-radius:50%;cursor:grab;touch-action:none;background:repeating-conic-gradient(#8f949b 0deg 4deg,#c3c7cd 4deg 8deg);box-shadow:0 10px 16px rgba(0,0,0,.4);transition:transform .08s}
+.knob.down{transform:translateY(2px) scale(.985);cursor:grabbing}
+.knob:focus-visible{outline:4px solid #7fa8e8;outline-offset:6px}
+.knob .cap{position:absolute;inset:12%;border-radius:50%;background:radial-gradient(circle at 35% 30%,#f1f2f4 0%,#c6c9ce 55%,#9ea2a9 100%);transition:transform .12s ease-out}
+.knob .cap i{position:absolute;left:50%;top:9%;width:9%;height:9%;margin-left:-4.5%;border-radius:50%;background:#2a2d33}
+.knob svg.hold{position:absolute;inset:-9%;width:118%;height:118%;transform:rotate(-90deg);pointer-events:none}
+.knob svg.hold circle{fill:none;stroke:#f2a93b;stroke-width:3;stroke-dasharray:302;stroke-dashoffset:302;opacity:0}
+.knob.holding svg.hold circle{opacity:1;stroke-dashoffset:0;transition:stroke-dashoffset .6s linear}
+.pbtn{position:absolute;border-radius:50%;cursor:pointer;touch-action:none;background:radial-gradient(circle at 50% 50%,#b7bbc1 0 58%,#8f949b 60% 100%);box-shadow:0 6px 10px rgba(0,0,0,.35);transition:transform .08s}
+.pbtn .cap{position:absolute;inset:18%;border-radius:50%;background:radial-gradient(circle at 35% 30%,#f4f5f7 0%,#cfd2d6 60%,#a9adb3 100%);box-shadow:inset 0 -2px 3px rgba(0,0,0,.2)}
+.pbtn.down{transform:translateY(3px) scale(.97)}
+.pbtn:focus-visible{outline:4px solid #7fa8e8;outline-offset:6px}
+.pbtn svg.hold{position:absolute;inset:-12%;width:124%;height:124%;transform:rotate(-90deg);pointer-events:none}
+.pbtn svg.hold circle{fill:none;stroke:#f2a93b;stroke-width:3;stroke-dasharray:302;stroke-dashoffset:302;opacity:0}
+.pbtn.holding svg.hold circle{opacity:1;stroke-dashoffset:0;transition:stroke-dashoffset .6s linear}
+@media (prefers-reduced-motion:reduce){.knob .cap,.knob{transition:none}.knob.holding svg.hold circle{transition:none}}
+.log{display:flex;gap:12px;align-items:baseline;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+.log b{font:500 12px var(--mono);letter-spacing:.08em;color:var(--muted);flex:none}
+.log span{min-width:0}
+.fine{font-size:13px;color:var(--muted);margin:0}
+.right{display:flex;flex-direction:column;gap:14px;min-width:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.card .eye{font:500 12px var(--mono);letter-spacing:.08em;color:var(--muted)}
+.card h2{margin:0;font-size:22px;line-height:1.1}
+.rows{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px;font-size:14px}
+.rows dt{font-weight:600}
+.rows dd{margin:0;color:var(--muted)}
+.btns{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.cbtn{min-height:44px;border-radius:8px;border:1px solid var(--line);background:var(--btn);color:var(--ink);font:600 14px var(--sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px}
+.cbtn:hover{background:var(--btn-hover)}
+.cbtn svg{width:20px;height:20px}
+.cbtn svg path{fill:none;stroke:currentColor;stroke-width:1.8}
+.idlerow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.idlerow label{display:flex;gap:8px;align-items:center;font-size:14px;cursor:pointer}
+.idlerow input{width:18px;height:18px;accent-color:var(--accent)}
+/* screen (fixed device colors) */
+.tb{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;border-bottom:1px solid #1a2740}
+.tabs{display:flex;gap:24px;font:500 15px var(--mono);letter-spacing:.08em}
+.tab{color:#5f6e86;padding:11px 0 9px;border-bottom:3px solid transparent}
+.tbr{display:flex;gap:14px;align-items:center;font:500 14px var(--mono);color:#8796ad}
+.chip{border:1px solid #33455f;border-radius:4px;padding:2px 7px;font-size:12px;color:#c9d3e2}
+.body{position:relative;height:436px;display:flex}
+.map{position:relative;width:500px;height:436px;flex:none;overflow:hidden}
+.map svg.bg{position:absolute;inset:0}
+.it{position:absolute;width:26px;height:26px}
+.it svg{position:absolute;inset:0}
+.lab{position:absolute;left:28px;top:4px;white-space:nowrap;font:500 12px var(--mono);color:#8796ad}
+.lab.on{color:#0a1220;font-weight:600;padding:1px 6px;border-radius:3px;top:2px}
+.star{position:absolute;left:-12px;top:-10px;font-size:13px;color:#f2d04b}
+.ring{position:absolute;left:-10px;top:-10px;width:46px;height:46px;border-radius:50%;border:2px solid}
+.rl{position:absolute;font:500 11px var(--mono);color:#5b6d88}
+.zbox{position:absolute;left:14px;bottom:14px;display:flex;flex-direction:column;gap:6px}
+.zb{width:40px;height:40px;border-radius:8px;border:1px solid #2b3c57;background:rgba(14,24,42,.9);color:#c9d3e2;font:500 22px var(--mono);cursor:pointer;line-height:1}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:40px;color:#8796ad;font-size:18px}
+.cardS{flex:1;min-width:0;border-left:1px solid #1a2740;padding:20px 22px;display:flex;flex-direction:column;gap:12px}
+.eyeS{font:500 12px var(--mono);letter-spacing:.1em;color:#8796ad}
+.t1{font-size:36px;font-weight:700;line-height:1.02}
+.t2{font-size:16px;color:#8796ad}
+.t3{font-size:24px;font-weight:600;line-height:1.1}
+.k{font:500 12px var(--mono);color:#8796ad}
+.v{font-size:24px;font-weight:600}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 14px}
+.foot{margin-top:auto;display:flex;justify-content:space-between;font:500 12px var(--mono);color:#8796ad}
+.detail{flex:1;padding:22px 28px;display:flex;flex-direction:column;gap:16px}
+.dhead{display:flex;justify-content:space-between;align-items:flex-start}
+.dots{display:flex;gap:8px;align-items:center;font:500 12px var(--mono);color:#8796ad}
+.dot{width:9px;height:9px;border-radius:50%;background:#2b3a54}
+.prog{position:relative;height:6px;border-radius:3px;background:#1d2b44;margin:26px 0 8px}
+.prog b{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+.photo{width:300px;height:180px;border-radius:8px;background:#121c32;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#5f6e86;font:500 12px var(--mono);flex:none}
+.menu{position:absolute;right:0;top:0;bottom:0;width:340px;background:rgba(7,12,24,.97);border-left:1px solid #2b3c57;padding:18px 14px;display:flex;flex-direction:column;gap:4px}
+.mi{font-size:20px;padding:9px 12px;border-radius:7px;color:#c9d3e2;display:flex;justify-content:space-between}
+.mi.cur{background:#1c2b47;color:#ffffff}
+.mi small{font:500 12px var(--mono);color:#8796ad;align-self:center}
+.sep{height:1px;background:#1f2d47;margin:6px 0}
+.todo{flex:1;padding:18px 28px;display:flex;flex-direction:column;gap:4px}
+.trow{display:flex;align-items:center;gap:16px;height:50px;padding:0 14px;border-radius:8px;font-size:22px}
+.box{width:22px;height:22px;border-radius:5px;flex:none;display:flex;align-items:center;justify-content:center}
+.idle{position:absolute;inset:0;background:#070c18;padding:36px 44px;display:flex;flex-direction:column;gap:10px}
+.idle .big{font-size:74px;font-weight:700;line-height:1}
+.idle .wake{margin-top:auto;font:500 13px var(--mono);color:#5f6e86;letter-spacing:.08em}
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>SkyTile Knob Simulator</h1>
+      <p class="sub">Drag a knob in a circle to turn it, click to press, and hold for a long press. Scrolling over a knob turns it too, and so do the arrow keys when it's focused.</p>
+    </div>
+    <div class="seg" role="group" aria-label="Knob setup">
+      <button type="button" data-setup="two" aria-pressed="true">Two knobs</button>
+      <button type="button" data-setup="btn" aria-pressed="false">Knob + button</button>
+      <button type="button" data-setup="one" aria-pressed="false">One knob</button>
+    </div>
+    <div class="seg" role="group" aria-label="Case color">
+      <button type="button" data-case="white" aria-pressed="true">Muted white</button>
+      <button type="button" data-case="charcoal" aria-pressed="false">Charcoal</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="left">
+      <div class="stagebox" id="stagebox">
+        <div class="stage" id="stage">
+          <div class="device">
+            <div class="case"></div>
+            <div class="win"><div class="screen" id="screen"></div><div class="glare"></div></div>
+            <div id="knobs"></div>
+          </div>
+        </div>
+      </div>
+      <div class="log" aria-live="polite"><b>LAST ACTION</b><span id="log">Try a knob. The bottom one picks things, the top one changes mode.</span></div>
+      <p class="fine">Flights, ships, launches and tasks on screen are sample data. The real tile pulls them live.</p>
+    </div>
+
+    <div class="right">
+      <div id="cards" style="display:flex;flex-direction:column;gap:14px"></div>
+      <div class="card">
+        <span class="eye">IDLE MODE</span>
+        <h2 id="idleTitle">Awake</h2>
+        <p class="fine" id="idleText">After 30 seconds without a touch, the screen hides the menus and just follows what you picked.</p>
+        <div class="idlerow">
+          <label><input type="checkbox" id="autoIdle" checked> Go idle after 30 s</label>
+          <button type="button" class="cbtn" id="idleBtn" style="padding:0 14px">Sleep now</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+var MODES=[{l:'PLANES',c:'#f2a93b'},{l:'SHIPS',c:'#3fc1b0'},{l:'SPACE',c:'#8fa8ff'},{l:'TO-DO',c:'#7fd18b'}];
+var FILTERS=['All','Interesting','Favorites'];
+var PLANE='M0 -8 L1.6 -2.4 L8 1.2 L8 3 L1.6 1.2 L1.1 5.6 L3.4 7.4 L3.4 8.6 L0 7.9 L-3.4 8.6 L-3.4 7.4 L-1.1 5.6 L-1.6 1.2 L-8 3 L-8 1.2 L-1.6 -2.4 Z';
+var SHIP='M0 -8 L3.4 -3 L3.4 7 L-3.4 7 L-3.4 -3 Z';
+var PLANES=[
+ {id:'SWA2381',dx:-105,dy:-90,hdg:304,op:'Southwest',type:'Boeing 737-8',from:'SAN',fc:'San Diego',to:'OAK',tc:'Oakland',alt:'12,400 ft',spd:'287 kt',dep:'1:02 PM',arr:'2:24 PM',prog:.12,reg:'N8817L',age:'3 yrs'},
+ {id:'UAL1132',dx:-218,dy:70,hdg:140,op:'United',type:'Airbus A320',from:'SFO',fc:'San Francisco',to:'SAN',tc:'San Diego',alt:'6,200 ft',spd:'240 kt',dep:'11:48 AM',arr:'1:21 PM',prog:.9,reg:'N456UA',age:'21 yrs'},
+ {id:'N52KC',dx:65,dy:-153,hdg:90,op:'Private',type:'Cessna 172',from:'MYF',fc:'Montgomery',to:'CRQ',tc:'Carlsbad',alt:'3,500 ft',spd:'110 kt',dep:'12:55 PM',arr:'1:30 PM',prog:.4,reg:'N52KC',age:'44 yrs'},
+ {id:'ASA615',dx:92,dy:100,hdg:300,op:'Alaska',type:'Boeing 737-9',from:'SAN',fc:'San Diego',to:'SEA',tc:'Seattle',alt:'18,900 ft',spd:'340 kt',dep:'1:10 PM',arr:'3:52 PM',prog:.06,reg:'N915AK',age:'6 yrs'},
+ {id:'RCH431',dx:-160,dy:-20,hdg:250,op:'US Air Force',type:'Boeing C-17A',from:'NKX',fc:'Miramar',to:'HIK',tc:'Hickam, Hawaii',alt:'8,700 ft',spd:'250 kt',dep:'12:58 PM',arr:'6:40 PM',prog:.03,reg:'07-7169',age:'18 yrs',tag:'Military heavy'},
+ {id:'AAL2049',dx:-133,dy:137,hdg:75,op:'American',type:'Airbus A321',from:'DFW',fc:'Dallas',to:'SAN',tc:'San Diego',alt:'4,100 ft',spd:'190 kt',dep:'11:35 AM',arr:'1:31 PM',prog:.95,reg:'N921US',age:'10 yrs'},
+ {id:'UPS2871',dx:300,dy:-240,hdg:250,op:'UPS',type:'Boeing 747-8F',from:'SDF',fc:'Louisville',to:'ONT',tc:'Ontario',alt:'33,000 ft',spd:'480 kt',dep:'10:20 AM',arr:'1:50 PM',prog:.8,reg:'N607UP',age:'9 yrs',tag:'Jumbo jet'},
+ {id:'NKS455',dx:-430,dy:200,hdg:20,op:'Spirit',type:'Airbus A320neo',from:'LAS',fc:'Las Vegas',to:'SAN',tc:'San Diego',alt:'22,000 ft',spd:'410 kt',dep:'12:40 PM',arr:'1:45 PM',prog:.6,reg:'N902NK',age:'5 yrs'}
+];
+var SHIPS=[
+ {id:'PACIFIC TRADER',dx:-272,dy:-34,hdg:318,type:'Container ship',len:'294 m',from:'Manzanillo',to:'Long Beach',spd:'14.2 kn',eta:'4:30 AM',prog:.78,flag:'Liberia',mmsi:'636019825',tag:'Largest nearby'},
+ {id:'OCEAN SPRINT',dx:-347,dy:-167,hdg:150,type:'Tanker',len:'183 m',from:'Long Beach',to:'Ensenada',spd:'11.8 kn',eta:'9:10 AM',prog:.35,flag:'Marshall Islands',mmsi:'538009877'},
+ {id:'SEA LARK',dx:-119,dy:109,hdg:10,type:'Sailing yacht',len:'14 m',from:'Ensenada',to:'Mission Bay',spd:'6.1 kn',eta:'2:40 PM',prog:.9,flag:'USA',mmsi:'368204511'},
+ {id:'KELP STAR',dx:-82,dy:-136,hdg:200,type:'Fishing vessel',len:'22 m',from:'San Diego Bay',to:'Coronado Islands',spd:'8.4 kn',eta:'1:55 PM',prog:.2,flag:'USA',mmsi:'367551230'},
+ {id:'NORTH WIND',dx:-367,dy:95,hdg:20,type:'Cargo ship',len:'190 m',from:'Ensenada',to:'Long Beach',spd:'12.9 kn',eta:'11:50 PM',prog:.3,flag:'Panama',mmsi:'352004118'},
+ {id:'CORAL QUEEN',dx:-190,dy:163,hdg:160,type:'Cruise ship',len:'290 m',from:'San Diego',to:'Cabo San Lucas',spd:'18.0 kn',eta:'Tue 8:00 AM',prog:.05,flag:'Bahamas',mmsi:'311000892',tag:'Cruise ship'},
+ {id:'ISLAND RUNNER',dx:-510,dy:-119,hdg:330,type:'Car carrier',len:'200 m',from:'Ensenada',to:'Port Hueneme',spd:'16.5 kn',eta:'6:20 AM',prog:.4,flag:'Norway',mmsi:'257044210',tag:'Car carrier'}
+];
+var t0=Date.now();
+var LAUNCHES=[
+ {rocket:'Falcon 9',payload:'Starlink satellites',site:'Vandenberg SFB, 245 mi NW',t:2*3600+14*60+36,note:'Night launch. Look northwest from San Diego.'},
+ {rocket:'Electron',payload:'Earth-imaging satellite',site:'Mahia, New Zealand',t:30*3600+40*60,note:'Not visible from here. Watch the stream.'},
+ {rocket:'Falcon 9',payload:'Cargo to the ISS',site:'Cape Canaveral, Florida',t:3*86400+11*3600+5*60,note:'Not visible from here. Watch the stream.'}
+];
+var ZF={P:[2,1,.4],S:[2,1,.5]};
+var RINGS={P:[['2.5 mi','5 mi'],['5 mi','10 mi'],['12.5 mi','25 mi']],S:[['2.5 nm','5 nm'],['5 nm','10 nm'],['10 nm','20 nm']]};
+var PAGES={P:['Overview','Flight','Aircraft'],S:['Overview','Voyage','Vessel']};
+
+var S={setup:'two',mode:0,filter:0,selP:'SWA2381',selS:'PACIFIC TRADER',selL:0,selT:1,detail:false,page:0,
+  favs:{'CORAL QUEEN':true},rem:{},hideDone:false,zoom:{P:1,S:1},menu:false,cur:0,idle:false,ang:{},
+  tasks:[{x:'Order SkyTile parts',d:true},{x:'Send the case files to JLC3DP',d:false},{x:'Solder the practice kit',d:false},{x:'Book dentist cleaning',d:false},{x:'Pick up groceries',d:false},{x:'Water the plants',d:true}],
+  last:Date.now(),auto:true};
+
+function kind(){return S.mode===0?'P':S.mode===1?'S':null}
+function acc(){return MODES[S.mode].c}
+function visible(k){
+  var data=k==='P'?PLANES:SHIPS,f=ZF[k][S.zoom[k]],hx=k==='P'?323:435;
+  return data.filter(function(d){return S.filter===0||(S.filter===1&&d.tag)||(S.filter===2&&S.favs[d.id])})
+   .map(function(d){return {d:d,x:hx+d.dx*f,y:250+d.dy*f}})
+   .filter(function(p){return p.x>14&&p.x<486&&p.y>14&&p.y<422});
+}
+function selId(k){return k==='P'?S.selP:S.selS}
+function setSel(k,id){if(k==='P')S.selP=id;else S.selS=id}
+function ensureSel(k){var v=visible(k);if(!v.length)return null;var id=selId(k);if(!v.some(function(p){return p.d.id===id})){setSel(k,v[0].d.id)}return selId(k)}
+function selData(k){var id=ensureSel(k);if(!id)return null;return (k==='P'?PLANES:SHIPS).filter(function(d){return d.id===id})[0]}
+function dist(k,d){var h=Math.hypot(d.dx,d.dy);return k==='P'?(h/153*10).toFixed(1)+' mi':(h/102*5).toFixed(1)+' nm'}
+function fmtT(s){s=Math.max(0,Math.round(s));var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;function p(n){return (n<10?'0':'')+n}
+  return d>0?'T−'+d+'d '+p(h)+':'+p(m):'T−'+p(h)+':'+p(m)+':'+p(x)}
+function launchT(i){return LAUNCHES[i].t-(Date.now()-t0)/1000}
+function clock(){var n=new Date();return n.toLocaleDateString([], {weekday:'short'}).toUpperCase()+' '+n.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}
+function log(t){document.getElementById('log').textContent=t}
+
+/* ---------- actions ---------- */
+function browse(dir){
+  var k=kind();
+  if(k){var v=visible(k);if(!v.length){log('Nothing to pick in this view');return}
+    var id=ensureSel(k),i=v.map(function(p){return p.d.id}).indexOf(id);i=(i+dir+v.length)%v.length;setSel(k,v[i].d.id);log('Selected '+v[i].d.id)}
+  else if(S.mode===2){S.selL=(S.selL+dir+3)%3;log('Showing '+LAUNCHES[S.selL].rocket+', '+LAUNCHES[S.selL].payload.toLowerCase())}
+  else{var list=todoList();if(!list.length)return;var i2=list.indexOf(S.selT);i2=i2<0?0:(i2+dir+list.length)%list.length;S.selT=list[i2];log('Moved to "'+S.tasks[S.selT].x+'"')}
+}
+function todoList(){var r=[];S.tasks.forEach(function(t,i){if(!(S.hideDone&&t.d))r.push(i)});return r}
+function primary(){
+  var k=kind();
+  if(k){var d=selData(k);if(!d){log('Nothing selected');return}S.detail=!S.detail;S.page=0;log(S.detail?'Opened details for '+d.id+'. Turn to flip pages.':'Closed details')}
+  else if(S.mode===2){S.rem[S.selL]=!S.rem[S.selL];log(S.rem[S.selL]?'Reminder set. The tile flashes 10 minutes before liftoff.':'Reminder cleared')}
+  else{var t=S.tasks[S.selT];if(!t)return;t.d=!t.d;log((t.d?'Checked off "':'Unchecked "')+t.x+'"');if(S.hideDone&&t.d){var l=todoList();if(l.length)S.selT=l[0]}}
+}
+function toggleFav(){var k=kind();if(!k){log('Favorites are for planes and ships');return}var d=selData(k);if(!d){log('Nothing selected');return}
+  if(S.favs[d.id]){delete S.favs[d.id];log('Removed '+d.id+' from favorites')}else{S.favs[d.id]=true;log('Added '+d.id+' to favorites')}}
+function cycleFilter(){var k=kind();
+  if(k){S.filter=(S.filter+1)%3;S.detail=false;log('Showing: '+FILTERS[S.filter].toLowerCase())}
+  else if(S.mode===3){S.hideDone=!S.hideDone;var l=todoList();if(l.length&&l.indexOf(S.selT)<0)S.selT=l[0];log(S.hideDone?'Hiding done tasks':'Showing done tasks')}
+  else log('Nothing to filter on the space screen')}
+function setMode(m){S.mode=m;S.detail=false;S.menu=false;log('Switched to '+MODES[m].l.toLowerCase())}
+function goIdle(){S.idle=true;S.menu=false;log('Screen is idle. Any knob wakes it.')}
+function menuItems(){
+  var it=MODES.map(function(m,i){return {l:m.l.charAt(0)+m.l.slice(1).toLowerCase(),note:i===S.mode?'NOW':'',fn:function(){setMode(i)}}});
+  it.push({sep:true});
+  var k=kind();
+  if(k){it.push({l:'Show: '+FILTERS[S.filter],note:'PRESS TO CHANGE',keep:true,fn:cycleFilter});
+    var d=selData(k);if(d)it.push({l:S.favs[d.id]?'Remove from favorites':'Add to favorites',note:d.id,fn:toggleFav})}
+  if(S.mode===3)it.push({l:S.hideDone?'Show done tasks':'Hide done tasks',keep:true,fn:cycleFilter});
+  it.push({l:'Sleep screen now',fn:goIdle});
+  return it}
+function selectable(){return menuItems().filter(function(m){return !m.sep})}
+
+function act(knob,what,dir){
+  S.last=Date.now();
+  if(what==='turn')S.ang[knob]=(S.ang[knob]||0)+dir*15;
+  if(S.idle){S.idle=false;log('Woke up');render();return}
+  if(S.setup==='btn'&&knob==='button'){
+    if(what==='press')setMode((S.mode+1)%4);
+    else if(what==='hold')cycleFilter();
+  }else if(S.setup!=='one'){
+    if(knob==='mode'){
+      if(what==='turn')setMode((S.mode+dir+4)%4);
+      else if(what==='press')cycleFilter();
+      else goIdle();
+    }else{
+      if(what==='turn'){if(S.detail){var k=kind();S.page=(S.page+dir+3)%3;log('Detail page: '+PAGES[k][S.page])}else browse(dir)}
+      else if(what==='press')primary();
+      else toggleFav();
+    }
+  }else{
+    if(S.menu){var items=selectable();
+      if(what==='turn'){S.cur=(S.cur+dir+items.length)%items.length;log('Menu: '+items[S.cur].l)}
+      else if(what==='press'){var m=items[S.cur];m.fn();if(!m.keep)S.menu=false}
+      else{S.menu=false;log('Closed the menu')}
+    }else{
+      if(what==='turn'){if(S.detail){var k2=kind();S.page=(S.page+dir+3)%3;log('Detail page: '+PAGES[k2][S.page])}else browse(dir)}
+      else if(what==='press')primary();
+      else{S.menu=true;S.cur=0;log('Opened the menu. Turn to move, press to choose, hold to close.')}
+    }
+  }
+  render();
+}
+
+/* ---------- screen ---------- */
+function topbar(){
+  var tabs=MODES.map(function(m,i){return '<span class="tab" style="'+(i===S.mode?'color:'+m.c+';border-bottom-color:'+m.c:'')+'">'+m.l+'</span>'}).join('');
+  var chip=kind()?'<span class="chip">'+(S.filter===2?'★ ':'')+FILTERS[S.filter].toUpperCase()+'</span>':(S.mode===3&&S.hideDone?'<span class="chip">HIDING DONE</span>':'');
+  return '<div class="tb"><div class="tabs">'+tabs+'</div><div class="tbr">'+chip+'<span>'+clock()+'</span></div></div>';
+}
+function mapBg(k){
+  if(k==='P')return '<svg class="bg" width="500" height="436" viewBox="0 0 500 436"><rect width="500" height="436" fill="#0b1628"/><path d="M255 0 L269 50 L258 97 L277 146 L269 183 L289 233 L282 283 L303 333 L296 383 L316 436 L500 436 L500 0 Z" fill="#132138"/><circle cx="323" cy="250" r="77" fill="none" stroke="#20324d"/><circle cx="323" cy="250" r="153" fill="none" stroke="#20324d"/><circle cx="323" cy="250" r="230" fill="none" stroke="#1a2a42"/><circle cx="323" cy="250" r="9" fill="none" stroke="#e8edf5"/><circle cx="323" cy="250" r="3.5" fill="#e8edf5"/></svg>'
+   +'<span class="rl" style="left:330px;top:160px">'+RINGS.P[S.zoom.P][0]+'</span><span class="rl" style="left:330px;top:84px">'+RINGS.P[S.zoom.P][1]+'</span>';
+  return '<svg class="bg" width="500" height="436" viewBox="0 0 500 436"><rect width="500" height="436" fill="#0b1830"/><path d="M388 0 L401 43 L391 90 L411 140 L401 180 L422 230 L415 280 L435 329 L425 376 L445 436 L500 436 L500 0 Z" fill="#132138"/><circle cx="435" cy="250" r="102" fill="none" stroke="#20324d"/><circle cx="435" cy="250" r="204" fill="none" stroke="#20324d"/><circle cx="435" cy="250" r="306" fill="none" stroke="#1a2a42"/><circle cx="435" cy="250" r="9" fill="none" stroke="#e8edf5"/><circle cx="435" cy="250" r="3.5" fill="#e8edf5"/></svg>'
+   +'<span class="rl" style="left:318px;top:236px">'+RINGS.S[S.zoom.S][0]+'</span><span class="rl" style="left:216px;top:236px">'+RINGS.S[S.zoom.S][1]+'</span>';
+}
+function mapView(k){
+  var v=visible(k),id=ensureSel(k),a=acc(),items='';
+  v.forEach(function(p){var sel=p.d.id===id;
+    items+='<div class="it" style="left:'+(p.x-13)+'px;top:'+(p.y-13)+'px">'
+     +(sel&&S.detail?'<div class="ring" style="border-color:'+a+'"></div>':'')
+     +(S.favs[p.d.id]?'<span class="star">★</span>':'')
+     +'<svg width="26" height="26" viewBox="-9 -9 18 18" style="transform:rotate('+p.d.hdg+'deg)"><path d="'+(k==='P'?PLANE:SHIP)+'" fill="'+(sel?a:(k==='P'?'#c9d3e2':'#9fb3c8'))+'"/></svg>'
+     +'<span class="lab'+(sel?' on':'')+'" style="'+(sel?'background:'+a:'')+'">'+p.d.id+'</span></div>'});
+  var empty=v.length?'':'<div class="empty">'+(S.filter===2?'No favorites in view yet. '+(S.setup!=='one'?'Hold the bottom knob on a '+(k==='P'?'plane':'ship')+' to add one.':'Add one from the menu.'):'Nothing in view. Try zooming out.')+'</div>';
+  return '<div class="map">'+mapBg(k)+items+empty+'<div class="zbox"><button class="zb" data-z="-1" aria-label="Zoom in on the touchscreen">+</button><button class="zb" data-z="1" aria-label="Zoom out on the touchscreen">−</button></div></div>';
+}
+function sideCard(k){
+  var d=selData(k),v=visible(k);
+  if(!d)return '<div class="cardS"><span class="eyeS">NOTHING SELECTED</span><span class="t2">'+v.length+' in view</span></div>';
+  var fav=S.favs[d.id]?'<span style="color:#f2d04b">★ FAVORITE</span>':'SELECTED';
+  var tag=d.tag?'<span class="chip" style="align-self:flex-start;color:'+acc()+';border-color:'+acc()+'">'+d.tag.toUpperCase()+'</span>':'';
+  var stats=k==='P'?[['ALT',d.alt],['SPEED',d.spd],['HEADING',d.hdg+'°'],['DISTANCE',dist(k,d)]]:[['SPEED',d.spd],['COURSE',d.hdg+'°'],['DISTANCE',dist(k,d)],['ARRIVES',d.eta]];
+  return '<div class="cardS"><span class="eyeS">'+fav+'</span><div style="display:flex;flex-direction:column;gap:3px"><span class="t1">'+d.id+'</span><span class="t2">'+(k==='P'?d.op+' · '+d.type:d.type+' · '+d.len)+'</span></div>'+tag
+   +'<div><div class="k">'+(k==='P'?'ROUTE':'BOUND FOR')+'</div><div class="t3">'+(k==='P'?d.from+' → '+d.to:d.to)+'</div></div>'
+   +'<div class="grid2">'+stats.map(function(s){return '<div><div class="k">'+s[0]+'</div><div class="v">'+s[1]+'</div></div>'}).join('')+'</div>'
+   +'<div class="foot"><span>'+v.length+' IN VIEW</span><span>PRESS FOR DETAILS</span></div></div>';
+}
+function detailView(k){
+  var d=selData(k),a=acc(),pg=S.page,names=PAGES[k];
+  var dots='<div class="dots">'+names.map(function(n,i){return '<span class="dot" style="'+(i===pg?'background:'+a:'')+'"></span>'}).join('')+'<span style="margin-left:6px">'+names[pg].toUpperCase()+'</span></div>';
+  var head='<div class="dhead"><div style="display:flex;flex-direction:column;gap:4px"><span class="eyeS">'+(S.favs[d.id]?'<span style="color:#f2d04b">★ FAVORITE</span>':'DETAILS')+'</span><span class="t1" style="font-size:44px">'+d.id+'</span><span class="t2">'+(k==='P'?d.op+' · '+d.type:d.type+' · '+d.len+' · '+d.flag)+'</span></div>'+dots+'</div>';
+  var body='';
+  if(pg===0){
+    var st=k==='P'?[['ALTITUDE',d.alt],['SPEED',d.spd],['HEADING',d.hdg+'°'],['DISTANCE',dist(k,d)]]:[['SPEED',d.spd],['COURSE',d.hdg+'°'],['DISTANCE',dist(k,d)],['ARRIVES',d.eta]];
+    body='<div style="display:flex;gap:28px;align-items:center"><div><div class="k">'+(k==='P'?'FROM':'FROM')+'</div><div style="font-size:46px;font-weight:700;line-height:1">'+(k==='P'?d.from:d.from)+'</div>'+(k==='P'?'<div class="t2">'+d.fc+'</div>':'')+'</div>'
+     +'<svg width="70" height="20" viewBox="0 0 70 20"><path d="M2 10 H64 M56 3 L64 10 L56 17" fill="none" stroke="'+a+'" stroke-width="2.5"/></svg>'
+     +'<div><div class="k">TO</div><div style="font-size:46px;font-weight:700;line-height:1">'+d.to+'</div>'+(k==='P'?'<div class="t2">'+d.tc+'</div>':'')+'</div></div>'
+     +'<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:auto">'+st.map(function(s){return '<div><div class="k">'+s[0]+'</div><div class="v" style="font-size:28px">'+s[1]+'</div></div>'}).join('')+'</div>';
+  }else if(pg===1){
+    var pct=Math.round(d.prog*100);
+    body='<div style="display:flex;justify-content:space-between;margin-top:10px"><div><div class="k">'+(k==='P'?'DEPARTED':'LEFT')+'</div><div class="t3">'+(k==='P'?d.dep+' · '+d.fc:d.from)+'</div></div><div style="text-align:right"><div class="k">'+(k==='P'?'ARRIVES':'ETA')+'</div><div class="t3">'+(k==='P'?d.arr+' · '+d.tc:d.eta+' · '+d.to)+'</div></div></div>'
+     +'<div class="prog"><b style="width:'+pct+'%;background:'+a+'"></b><svg width="30" height="30" viewBox="-9 -9 18 18" style="position:absolute;top:-12px;left:calc('+pct+'% - 15px);transform:rotate(90deg)"><path d="'+(k==='P'?PLANE:SHIP)+'" fill="'+a+'"/></svg></div>'
+     +'<div class="t2">'+pct+'% of the way there</div>';
+  }else{
+    body='<div style="display:flex;gap:24px;align-items:flex-start"><div class="photo"><svg width="90" height="60" viewBox="-12 -12 24 24"><path d="'+(k==='P'?PLANE:SHIP)+'" fill="#2b3a54" transform="rotate(90)"/></svg>'+(k==='P'?'PHOTO FROM PLANESPOTTERS':'VESSEL PHOTO')+'</div>'
+     +'<div class="grid2" style="flex:1">'+(k==='P'?[['TYPE',d.type],['REGISTRATION',d.reg],['OPERATOR',d.op],['AGE',d.age]]:[['TYPE',d.type],['LENGTH',d.len],['FLAG',d.flag],['MMSI',d.mmsi]]).map(function(s){return '<div><div class="k">'+s[0]+'</div><div class="v" style="font-size:20px">'+s[1]+'</div></div>'}).join('')+'</div></div>';
+  }
+  return '<div class="detail">'+head+body+'</div>';
+}
+function spaceView(){
+  var L=LAUNCHES[S.selL],a=acc();
+  return '<div style="width:500px;flex:none;padding:24px 26px;display:flex;flex-direction:column;gap:8px"><div style="display:flex;justify-content:space-between;align-items:center"><span class="eyeS">UPCOMING LAUNCH '+(S.selL+1)+'/3</span>'+(S.rem[S.selL]?'<span class="chip" style="background:'+a+';color:#0a1220;border-color:'+a+'">REMINDER ON</span>':'')+'</div>'
+   +'<span style="font-size:52px;font-weight:700;line-height:1">'+L.rocket+'</span><span style="font-size:20px;color:#b7c2d6">'+L.payload+'</span><span class="t2">'+L.site+'</span>'
+   +'<span style="margin-top:10px;font:500 52px var(--mono);color:'+a+';line-height:1">'+fmtT(launchT(S.selL))+'</span>'
+   +'<div style="margin-top:auto;padding:10px 14px;border-radius:8px;background:#121c36;font-size:16px;color:#c9d3e2">'+L.note+'</div></div>'
+   +'<div class="cardS"><span class="eyeS">ISS PASS TONIGHT</span><span class="t1">7:42 PM</span><span class="t2">4 min · visible to the eye</span>'
+   +'<svg width="250" height="140" viewBox="0 0 160 92"><path d="M8 84 A72 72 0 0 1 152 84" fill="none" stroke="#24314f"/><path d="M8 84 H152" fill="none" stroke="#3a4766"/><path d="M16 80 Q 70 6, 146 74" fill="none" stroke="'+a+'" stroke-width="1.6" stroke-dasharray="3 3"/><circle cx="74" cy="34" r="3.5" fill="'+a+'"/><text x="4" y="92" font-size="7" fill="#8796ad" font-family="IBM Plex Mono">NW</text><text x="142" y="92" font-size="7" fill="#8796ad" font-family="IBM Plex Mono">SE</text></svg>'
+   +'<div class="foot"><span>3 LAUNCHES THIS WEEK</span></div></div>';
+}
+function todoView(){
+  var left=S.tasks.filter(function(t){return !t.d}).length,rows='';
+  todoList().forEach(function(i){var t=S.tasks[i],sel=i===S.selT;
+    rows+='<div class="trow" style="background:'+(sel?'#15233c':'transparent')+'"><span class="box" style="'+(t.d?'background:#7fd18b':'border:2px solid '+(sel?'#7fd18b':'#5f6e86'))+'">'+(t.d?'<svg width="14" height="14" viewBox="0 0 14 14"><path d="M2.5 7.2 L5.6 10 L11.5 3.8" fill="none" stroke="#0a1220" stroke-width="2.2"/></svg>':'')+'</span><span style="flex:1;color:'+(t.d?'#5f6e86':'#e8edf5')+';text-decoration:'+(t.d?'line-through':'none')+'">'+t.x+'</span></div>'});
+  return '<div class="todo"><div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:8px"><span style="font-size:34px;font-weight:700">Today</span><span style="font:500 15px var(--mono);color:#7fd18b">'+left+' LEFT</span></div>'+rows
+   +'<div class="foot" style="margin-top:auto"><span>TELL CLAUDE TO ADD OR CHECK OFF</span></div></div>';
+}
+function menuView(){
+  var items=menuItems(),i=-1,h='<div class="menu"><span class="eyeS" style="padding:0 12px 6px">MENU · HOLD TO CLOSE</span>';
+  items.forEach(function(m){if(m.sep){h+='<div class="sep"></div>';return}i++;h+='<div class="mi'+(i===S.cur?' cur':'')+'"><span>'+m.l+'</span><small>'+(m.note||'')+'</small></div>'});
+  return h+'</div>';
+}
+function idleView(){
+  var k=kind(),a=acc(),h='<div class="idle">';
+  if(k){var d=selData(k);
+    if(d){h+='<span class="eyeS" style="color:'+a+'">FOLLOWING</span><span class="big">'+d.id+'</span><span style="font-size:24px;color:#8796ad">'+(k==='P'?d.op+' · '+d.type:d.type+' · '+d.len)+'</span>'
+      +'<span style="font-size:40px;font-weight:600;margin-top:10px">'+(k==='P'?d.fc+' → '+d.tc:'Bound for '+d.to)+'</span>'
+      +'<div style="display:flex;gap:46px;margin-top:18px">'+(k==='P'?[['ALT',d.alt],['SPEED',d.spd],['DISTANCE',dist(k,d)]]:[['SPEED',d.spd],['DISTANCE',dist(k,d)],['ARRIVES',d.eta]]).map(function(s){return '<div><div class="k" style="font-size:14px">'+s[0]+'</div><div style="font-size:36px;font-weight:600">'+s[1]+'</div></div>'}).join('')+'</div>'}
+    else h+='<span class="big">'+visible(k).length+'</span><span style="font-size:24px;color:#8796ad">in view</span>';
+  }else if(S.mode===2){var L=LAUNCHES[S.selL];h+='<span class="eyeS" style="color:'+a+'">NEXT LAUNCH</span><span style="font-size:40px;font-weight:700">'+L.rocket+' · '+L.payload+'</span><span style="font:500 96px var(--mono);color:'+a+';line-height:1.1;margin-top:20px">'+fmtT(launchT(S.selL))+'</span><span style="font-size:22px;color:#8796ad">'+L.site+'</span>'}
+  else{var left=S.tasks.filter(function(t){return !t.d});h+='<span class="eyeS" style="color:'+a+'">TO-DO</span><span class="big">'+left.length+' left</span>'+(left[0]?'<span style="font-size:32px;margin-top:16px">Next: '+left[0].x+'</span>':'<span style="font-size:32px;margin-top:16px">All done</span>')}
+  return h+'<span class="wake">'+clock()+' · TOUCH A KNOB TO WAKE</span></div>';
+}
+function renderScreen(){
+  var el=document.getElementById('screen');
+  if(S.idle){el.innerHTML=idleView();return}
+  var k=kind(),body;
+  if(k)body=S.detail&&selData(k)?detailView(k):mapView(k)+sideCard(k);
+  else if(S.mode===2)body=spaceView();else body=todoView();
+  el.innerHTML=topbar()+'<div class="body">'+body+(S.menu?menuView():'')+'</div>';
+}
+
+/* ---------- knobs + cards ---------- */
+function knobHTML(name,x,y,d,label,eng){
+  return '<div class="knob" data-k="'+name+'" tabindex="0" role="button" aria-label="'+label+'. Arrow keys turn it, Enter presses, H holds." style="left:'+(x-d/2)+'px;top:'+(y-d/2)+'px;width:'+d+'px;height:'+d+'px"><svg class="hold" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48"/></svg><div class="cap"><i></i></div></div>'
+   +'<span class="engrave" style="left:'+x+'px;top:'+(y+d/2+14)+'px">'+eng+'</span>';
+}
+function btnHTML(x,y,d){return '<div class="pbtn" data-k="button" tabindex="0" role="button" aria-label="Mode button. Enter presses, H holds." style="left:'+(x-d/2)+'px;top:'+(y-d/2)+'px;width:'+d+'px;height:'+d+'px"><svg class="hold" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48"/></svg><div class="cap"></div></div><span class="engrave" style="left:'+x+'px;top:'+(y+d/2+16)+'px">MODE</span>'}
+function buildKnobs(){
+  var h=S.setup==='two'?knobHTML('mode',1127,150,148,'Top knob, mode','MODE')+knobHTML('sel',1127,452,148,'Bottom knob, select','SELECT')
+   :S.setup==='btn'?btnHTML(1127,170,96)+knobHTML('sel',1127,452,148,'Knob, select','SELECT')
+   :knobHTML('one',1127,300,178,'The knob','');
+  document.getElementById('knobs').innerHTML=h;
+  Array.prototype.forEach.call(document.querySelectorAll('.knob,.pbtn'),attach);
+}
+function hints(){
+  var k=kind(),mapName=k==='P'?'plane':'ship';
+  var selTurn=S.detail&&k?'Flip detail pages':k?'Pick a '+mapName:S.mode===2?'Pick a launch':'Move through tasks';
+  var selPress=k?(S.detail?'Close details':'Open details'):S.mode===2?'Set or clear a reminder':'Check off the task';
+  if(S.setup==='btn')return [
+    {key:'button',eye:'TOP BUTTON',title:'Mode',noTurn:true,rows:[['Press','Next mode: planes, ships, space, to-do, then around again'],['Hold',k?'Show all, interesting or favorites':S.mode===3?'Hide or show done tasks':'Nothing on this screen']]},
+    {key:'sel',eye:'BOTTOM KNOB',title:'Select',rows:[['Turn',selTurn],['Press',selPress],['Hold',k?'Add or remove favorite':'Nothing on this screen']]}];
+  if(S.setup==='two')return [
+    {key:'mode',eye:'TOP KNOB',title:'Mode',rows:[['Turn','Switch mode: planes, ships, space, to-do'],['Press',k?'Show all, interesting or favorites':S.mode===3?'Hide or show done tasks':'Nothing on this screen'],['Hold','Sleep the screen']]},
+    {key:'sel',eye:'BOTTOM KNOB',title:'Select',rows:[['Turn',selTurn],['Press',selPress],['Hold',k?'Add or remove favorite':'Nothing on this screen']]}];
+  return [{key:'one',eye:'THE KNOB',title:'Does everything',rows:S.menu?[['Turn','Move through the menu'],['Press','Choose'],['Hold','Close the menu']]:[['Turn',selTurn],['Press',selPress],['Hold','Open the menu: modes, filters, favorites, sleep']]}];
+}
+var ICON_L='<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 9 A6 6 0 1 1 7 14.5"/><path d="M2 6 L5 9.5 L8.5 6.5"/></svg>';
+var ICON_R='<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15 9 A6 6 0 1 0 13 14.5"/><path d="M18 6 L15 9.5 L11.5 6.5"/></svg>';
+function renderCards(){
+  document.getElementById('cards').innerHTML=hints().map(function(c){
+    return '<div class="card"><div><div class="eye">'+c.eye+'</div><h2>'+c.title+'</h2></div><dl class="rows">'+c.rows.map(function(r){return '<dt>'+r[0]+'</dt><dd>'+r[1]+'</dd>'}).join('')+'</dl>'
+     +(c.noTurn?'<div class="btns" style="grid-template-columns:repeat(2,minmax(0,1fr))"><button type="button" class="cbtn" data-a="'+c.key+'|press">Press</button><button type="button" class="cbtn" data-a="'+c.key+'|hold">Hold</button></div></div>':'<div class="btns"><button type="button" class="cbtn" data-a="'+c.key+'|turn|-1" aria-label="Turn '+c.title+' knob left">'+ICON_L+'</button><button type="button" class="cbtn" data-a="'+c.key+'|press">Press</button><button type="button" class="cbtn" data-a="'+c.key+'|hold">Hold</button><button type="button" class="cbtn" data-a="'+c.key+'|turn|1" aria-label="Turn '+c.title+' knob right">'+ICON_R+'</button></div></div>')}).join('');
+}
+function renderAngles(){Array.prototype.forEach.call(document.querySelectorAll('.knob'),function(el){el.querySelector('.cap').style.transform='rotate('+(S.ang[el.getAttribute('data-k')]||0)+'deg)'})}
+function renderIdle(){
+  document.getElementById('idleTitle').textContent=S.idle?'Idle':'Awake';
+  document.getElementById('idleBtn').textContent=S.idle?'Wake up':'Sleep now';
+  document.getElementById('idleText').textContent=S.idle?'Menus are hidden and the screen follows what you picked. Touch any knob to wake it.':(S.auto?'Goes idle in '+Math.max(0,Math.ceil((30000-(Date.now()-S.last))/1000))+' s without a touch.':'Auto idle is off.');
+}
+function render(){renderScreen();renderCards();renderAngles();renderIdle()}
+
+function attach(el){
+  var name=el.getAttribute('data-k'),down=false,lastA=0,accA=0,moved=false,held=false,timer=null,wheelT=0;
+  function angle(e){var r=el.getBoundingClientRect();return Math.atan2(e.clientY-(r.top+r.height/2),e.clientX-(r.left+r.width/2))*180/Math.PI}
+  el.addEventListener('pointerdown',function(e){down=true;moved=false;held=false;accA=0;lastA=angle(e);try{el.setPointerCapture(e.pointerId)}catch(_){}
+    el.classList.add('down','holding');timer=setTimeout(function(){if(!moved){held=true;el.classList.remove('holding');act(name,'hold')}},600)});
+  el.addEventListener('pointermove',function(e){if(!down||name==='button')return;var a=angle(e),dlt=a-lastA;if(dlt>180)dlt-=360;if(dlt<-180)dlt+=360;lastA=a;accA+=dlt;
+    if(Math.abs(accA)>=15){var steps=accA>0?Math.floor(accA/15):Math.ceil(accA/15);accA-=steps*15;if(!moved){moved=true;clearTimeout(timer);el.classList.remove('holding')}
+      var dir=steps>0?1:-1;for(var i=0;i<Math.abs(steps);i++)act(name,'turn',dir)}});
+  function end(press){if(!down)return;down=false;clearTimeout(timer);el.classList.remove('down','holding');if(press&&!moved&&!held)act(name,'press')}
+  el.addEventListener('pointerup',function(){end(true)});
+  el.addEventListener('pointercancel',function(){end(false)});
+  el.addEventListener('wheel',function(e){if(name==='button')return;e.preventDefault();var n=Date.now();if(n-wheelT<90)return;wheelT=n;act(name,'turn',e.deltaY>0?1:-1)},{passive:false});
+  el.addEventListener('keydown',function(e){
+    if(name!=='button'&&(e.key==='ArrowRight'||e.key==='ArrowDown')){e.preventDefault();act(name,'turn',1)}
+    else if(name!=='button'&&(e.key==='ArrowLeft'||e.key==='ArrowUp')){e.preventDefault();act(name,'turn',-1)}
+    else if(e.key==='Enter'||e.key===' '){e.preventDefault();act(name,'press')}
+    else if(e.key==='h'||e.key==='H'){e.preventDefault();act(name,'hold')}});
+}
+
+document.getElementById('cards').addEventListener('click',function(e){var b=e.target.closest('[data-a]');if(!b)return;var p=b.getAttribute('data-a').split('|');act(p[0],p[1],p[2]?+p[2]:0)});
+document.getElementById('screen').addEventListener('click',function(e){var b=e.target.closest('.zb');if(!b)return;var k=kind();if(!k)return;S.last=Date.now();
+  S.zoom[k]=Math.max(0,Math.min(2,S.zoom[k]+(+b.getAttribute('data-z'))));log('Touchscreen zoom: rings at '+RINGS[k][S.zoom[k]].join(' and '));render()});
+var SETUP_LOG={two:'Two knobs: top changes mode, bottom picks things.',btn:'Knob + button: the button steps through modes, the knob picks things.',one:'One knob: turn and press like before, hold for the menu.'};
+function setSetup(v){S.setup=v;S.menu=false;S.detail=S.detail&&v!=='x';Array.prototype.forEach.call(document.querySelectorAll('[data-setup]'),function(b){b.setAttribute('aria-pressed',b.getAttribute('data-setup')===v)});buildKnobs();log(SETUP_LOG[v]);render()}
+Array.prototype.forEach.call(document.querySelectorAll('[data-setup]'),function(b){b.addEventListener('click',function(){setSetup(b.getAttribute('data-setup'))})});
+function setCase(v){var r=document.getElementById('stage');r.style.setProperty('--case',v==='white'?'#dedbd3':'#24272d');r.style.setProperty('--engrave',v==='white'?'rgba(40,36,30,.32)':'rgba(255,255,255,.28)');
+  Array.prototype.forEach.call(document.querySelectorAll('[data-case]'),function(b){b.setAttribute('aria-pressed',b.getAttribute('data-case')===v)})}
+Array.prototype.forEach.call(document.querySelectorAll('[data-case]'),function(b){b.addEventListener('click',function(){setCase(b.getAttribute('data-case'))})});
+setCase('white');
+document.getElementById('autoIdle').addEventListener('change',function(e){S.auto=e.target.checked;S.last=Date.now();renderIdle()});
+document.getElementById('idleBtn').addEventListener('click',function(){S.last=Date.now();if(S.idle){S.idle=false;log('Woke up')}else goIdle();render()});
+
+function fit(){var box=document.getElementById('stagebox'),w=box.clientWidth,pad=Math.max(16,w*0.04),sc=Math.min(1,(w-pad*2)/1271);
+  var st=document.getElementById('stage');st.style.transform='translate('+pad+'px,'+pad+'px) scale('+sc+')';box.style.height=(684*sc+pad*2)+'px'}
+window.addEventListener('resize',fit);
+setInterval(function(){if(S.auto&&!S.idle&&Date.now()-S.last>30000){S.idle=true;S.menu=false;log('Went idle after 30 seconds. Any knob wakes it.');render();return}
+  renderScreen();renderIdle()},1000);
+buildKnobs();render();fit();
+})();
+</script>

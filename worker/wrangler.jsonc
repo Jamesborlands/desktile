@@ -1,0 +1,29 @@
+{
+  // SkyTile backend: data proxy for the desk tile + to-do list + MCP server for Claude.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "skytile",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // Home position (map center, ships box, ISS passes).
+  "vars": {
+    "HOME_LAT": "32.95",
+    "HOME_LON": "-117.25"
+  },
+
+  // To-do list. The id is filled in automatically on first deploy.
+  "kv_namespaces": [{ "binding": "TODOS" }],
+
+  // Ships: one Durable Object holds the aisstream.io collector and vessel cache.
+  "durable_objects": {
+    "bindings": [{ "name": "SHIPS", "class_name": "Ships" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Ships"] }]
+
+  // Secrets (set with `npx wrangler secret put NAME`, never in this file):
+  //   TILE_KEY       device key the tile sends in the X-Tile-Key header
+  //   MCP_SECRET     random path segment: the connector URL is /mcp/<MCP_SECRET>
+  //   AISSTREAM_KEY  aisstream.io API key
+}

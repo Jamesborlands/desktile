@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Secrets (never commit)
+firmware/skytile/include/secrets.h
+worker/.dev.vars
+
+# Elecrow repo clone (4.7 GB): git clone it again if needed (URL in CLAUDE.md)
+vendor/
+# Throwaway copy of Elecrow's demo
+firmware/elecrow-demo/
+# Build output and ESP-IDF components fetched by the custom sdkconfig build
+firmware/**/.pio/
+firmware/skytile/managed_components/
+firmware/skytile/sdkconfig.advance-hmi
+firmware/skytile/dependencies.lock
+# Worker
+worker/node_modules/
+worker/.wrangler/
+firmware/skytile/.dummy/
+firmware/skytile/sdkconfig.defaults
