@@ -25,6 +25,17 @@ const json = (data: unknown, status = 200, maxAge = 0) =>
     headers: { "content-type": "application/json", "cache-control": maxAge ? `public, max-age=${maxAge}` : "no-store" },
   });
 
+// The tile's fonts only cover plain ASCII: fold accents (é -> e, ñ -> n) and drop
+// anything else (emoji, symbols) from responses sent to the tile.
+const tileJson = (data: unknown, status = 200) =>
+  new Response(
+    JSON.stringify(data)
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\x00-\x7f]/g, ""),
+    { status, headers: { "content-type": "application/json", "cache-control": "no-store" } },
+  );
+
 // Cache API wrapper: serve a cached JSON body if fresh, else build and store it.
 async function cached(key: string, ttl: number, ctx: ExecutionContext, build: () => Promise<unknown>) {
   const cache = caches.default;
@@ -312,10 +323,10 @@ export default {
     if (!env.TILE_KEY || request.headers.get("x-tile-key") !== env.TILE_KEY) return json({ error: "unauthorized" }, 401);
 
     try {
-      if (path.startsWith("/route/")) return json(await route(decodeURIComponent(path.slice(7)), ctx));
-      if (path === "/space") return json(await space(env, ctx));
-      if (path === "/ships") return json(await ships(env));
-      if (path === "/todos" && request.method === "GET") return json({ todos: await getTodos(env) });
+      if (path.startsWith("/route/")) return tileJson(await route(decodeURIComponent(path.slice(7)), ctx));
+      if (path === "/space") return tileJson(await space(env, ctx));
+      if (path === "/ships") return tileJson(await ships(env));
+      if (path === "/todos" && request.method === "GET") return tileJson({ todos: await getTodos(env) });
       if (path === "/todos" && request.method === "POST") {
         const body: any = await request.json().catch(() => ({}));
         if (!body.text) return json({ error: "text required" }, 400);
