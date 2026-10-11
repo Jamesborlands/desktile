@@ -703,11 +703,20 @@ static void rebuild_visible() {
       if (p.alt < 0) continue;  // on the ground: hidden (too noisy at airports)
       if (g_filter == F_INTERESTING && !is_interesting(p)) continue;
       if (g_filter == F_FAVS && !is_fav(p.hex)) continue;
+    } else if (g_idle) {
+      const Ship &sh = g_sh[i];  // asleep: moving ships only (moored harbors are a pile-up)
+      if (sh.sog < 0.5f && strcmp(sh.key, g_sel[1])) continue;
     }
     g_vis[g_vis_n++] = i;
   }
-  if (selected_pos() < 0) {  // default to the nearest one (lists are sorted nearest first)
-    if (g_vis_n) strlcpy(g_sel[sel_slot()], item_key(g_vis[0]), sizeof g_sel[0]);
+  if (selected_pos() < 0) {  // default: nearest (lists are sorted), but for ships prefer a moving, named one
+    int pick = g_vis_n ? g_vis[0] : -1;
+    if (g_mode == M_SHIPS)
+      for (int k = 0; k < g_vis_n; k++) {
+        const Ship &sh = g_sh[g_vis[k]];
+        if (sh.sog >= 0.5f && !ship_unnamed(sh)) { pick = g_vis[k]; break; }
+      }
+    if (pick >= 0) strlcpy(g_sel[sel_slot()], item_key(pick), sizeof g_sel[0]);
     else g_sel[sel_slot()][0] = 0;
   }
 }
@@ -1377,9 +1386,14 @@ static void go_idle() {
   g_idle = true;
   g_mode_before_idle = g_mode;
   if (!map_mode()) g_mode = M_PLANES;  // the dashboard map shows planes unless you were on Ships
+  if (g_mode == M_SHIPS) {  // following a moored or unnamed boat is dull: let the default pick a moving one
+    for (int i = 0; i < g_sh_n; i++)
+      if (!strcmp(g_sh[i].key, g_sel[1]) && (g_sh[i].sog < 0.5f || ship_unnamed(g_sh[i]))) { g_sel[1][0] = 0; break; }
+  }
   set_map_full(true);
   refresh_idle();
   show(idle_ov, true);
+  lv_obj_invalidate(lv_screen_active());  // full redraw: no leftovers from the previous screen
   apply_backlight();
 }
 
@@ -1389,6 +1403,7 @@ static void wake() {
   show(idle_ov, false);
   set_map_full(false);
   set_mode(g_mode_before_idle);
+  lv_obj_invalidate(lv_screen_active());
   apply_backlight();
 }
 
