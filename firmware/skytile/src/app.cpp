@@ -556,7 +556,7 @@ static lv_obj_t *scr_todo, *todo_list, *todo_head, *todo_empty;
 static lv_obj_t *ota_overlay, *ota_lbl, *ota_bar;
 static lv_obj_t *idle_ov, *idle_tag, *tag_eye, *tag_name, *tag_line;
 static const int DASH_TD = 7;  // to-dos shown on the idle dashboard
-static lv_obj_t *dash_time, *dash_date, *dash_td_count, *dash_td[DASH_TD], *dash_l_count, *dash_l_name, *dash_l_vis;
+static lv_obj_t *dash_time, *dash_date, *dash_td[DASH_TD], *dash_l_count, *dash_l_name, *dash_l_vis;
 static bool g_idle = false;
 
 static void set_text(lv_obj_t *l, const char *t) {
@@ -1336,8 +1336,6 @@ static void refresh_idle() {
   // to-dos: count + first open items
   int left = 0;
   for (int i = 0; i < g_td_n; i++) left += !g_td[i].done;
-  snprintf(b, sizeof b, left ? "%d LEFT" : "", left);
-  set_text(dash_td_count, b);
   int shown = 0;
   for (int i = 0; i < g_td_n && shown < DASH_TD; i++) {
     if (g_td[i].done) continue;
@@ -1428,16 +1426,12 @@ static void build_idle() {
   dash_date = mk_label(col, "", &lv_font_montserrat_16, C_MUTED, 22, 74);
   dash_rule(col, 104);
   dash_eye(col, "TO-DO", C_TODO, 118);
-  dash_td_count = mk_label(col, "", &lv_font_montserrat_12, C_MUTED, 0, 118);
-  lv_obj_set_width(dash_td_count, 260);
-  lv_obj_set_style_text_align(dash_td_count, LV_TEXT_ALIGN_RIGHT, 0);
   for (int i = 0; i < DASH_TD; i++) dash_td[i] = mk_dot_label(col, &lv_font_montserrat_16, C_TEXT, 20, 142 + i * 26, 240);
   dash_rule(col, 334);
   dash_eye(col, "NEXT LAUNCH", C_SPACE, 348);
   dash_l_count = mk_label(col, "", &lv_font_montserrat_24, C_SPACE, 20, 366);
   dash_l_name = mk_dot_label(col, &lv_font_montserrat_12, C_MUTED, 20, 398, 240);
   dash_l_vis = mk_dot_label(col, &lv_font_montserrat_12, C_SPACE, 20, 416, 240);
-  mk_label(col, "TOUCH TO WAKE", &lv_font_montserrat_12, C_DIM, 20, 452);
 
   lv_obj_add_flag(idle_ov, LV_OBJ_FLAG_HIDDEN);
 }

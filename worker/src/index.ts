@@ -7,6 +7,8 @@
 //   GET  /ships                  vessels near San Diego (aisstream.io via Durable Object)
 //   GET  /todos                  list; POST /todos {text}; POST /todos/:id/done; DELETE /todos/:id
 //   *    /mcp/<MCP_SECRET>       MCP server (Streamable HTTP) for Claude
+//   GET  /t/<WEB_SECRET>         to-do web app for the phone; its API (and the Siri
+//                                Shortcut) lives under /t/<WEB_SECRET>/api/todos
 //
 // Everything except /mcp needs the X-Tile-Key header (secret TILE_KEY).
 import { McpServer } from "@modelcontextprotocol/server";
@@ -14,6 +16,7 @@ import { createMcpHandler } from "agents/mcp/server";
 import * as sat from "satellite.js";
 import { z } from "zod";
 import { Ships, shipTypeName } from "./ships";
+import { todoPage } from "./webapp";
 
 export { Ships };
 
@@ -323,6 +326,39 @@ export default {
       const inner = new URL(request.url);
       inner.pathname = "/mcp";
       return createMcpHandler(mcpServer(env), { route: "/mcp" })(new Request(inner, request), env, ctx);
+    }
+
+    // To-do web app + Siri Shortcut: the secret in the path is the credential.
+    if (path.startsWith("/t/")) {
+      if (!env.WEB_SECRET) return new Response("Not found", { status: 404 });
+      const base = `/t/${env.WEB_SECRET}`;
+      if (path === base || path === base + "/")
+        return new Response(todoPage(), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" } });
+      if (!path.startsWith(base + "/api/todos")) return new Response("Not found", { status: 404 });
+      const sub = path.slice((base + "/api/todos").length);
+      if (sub === "" && request.method === "GET") return json({ todos: await getTodos(env) });
+      if (sub === "" && request.method === "POST") {
+        // JSON {"text": "..."} from the web app, or plain text from a Shortcut
+        const raw = await request.text();
+        let text = raw;
+        try { text = String(JSON.parse(raw).text ?? ""); } catch {}
+        text = text.trim();
+        if (!text) return json({ error: "text required" }, 400);
+        return json(await addTodo(env, text), 201);
+      }
+      if (sub === "/clear" && request.method === "POST") {
+        await putTodos(env, (await getTodos(env)).filter((t) => !t.done));
+        return json({ ok: true });
+      }
+      const m = sub.match(/^\/([^/]+)(\/done)?$/);
+      if (m) {
+        const todos = await getTodos(env);
+        const t = todos.find((x) => x.id === m[1]);
+        if (!t) return json({ error: "not found" }, 404);
+        if (m[2] && request.method === "POST") { t.done = !t.done; await putTodos(env, todos); return json(t); }
+        if (!m[2] && request.method === "DELETE") { await putTodos(env, todos.filter((x) => x !== t)); return json({ ok: true }); }
+      }
+      return json({ error: "not found" }, 404);
     }
 
     if (!env.TILE_KEY || request.headers.get("x-tile-key") !== env.TILE_KEY) return json({ error: "unauthorized" }, 401);
