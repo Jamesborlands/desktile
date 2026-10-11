@@ -232,10 +232,26 @@ async function ships(env: Env) {
 }
 
 // ---------------------------------------------------------------- to-dos
-type Todo = { id: string; text: string; done: boolean; created: number };
+type Todo = { id: string; text: string; done: boolean; created: number; doneAt?: number };
+
+// Checked-off items disappear 24 hours after they were checked off.
+const DONE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function setDone(t: Todo, done: boolean) {
+  t.done = done;
+  if (done) t.doneAt = Date.now();
+  else delete t.doneAt;
+}
 
 async function getTodos(env: Env): Promise<Todo[]> {
-  return (await env.TODOS.get<Todo[]>("todos", "json")) ?? [];
+  const todos = (await env.TODOS.get<Todo[]>("todos", "json")) ?? [];
+  const now = Date.now();
+  let changed = false;
+  for (const t of todos)
+    if (t.done && !t.doneAt) { t.doneAt = now; changed = true; }  // checked off before timestamps existed
+  const kept = todos.filter((t) => !(t.done && now - (t.doneAt ?? now) > DONE_TTL_MS));
+  if (changed || kept.length !== todos.length) await putTodos(env, kept);
+  return kept;
 }
 async function putTodos(env: Env, todos: Todo[]) {
   await env.TODOS.put("todos", JSON.stringify(todos));
@@ -263,7 +279,7 @@ function mcpServer(env: Env) {
 
     server.registerTool(
       "list_todos",
-      { description: "List the to-do items shown on James's SkyTile desk display." },
+      { description: "List the to-do items shown on James's SkyTile desk display. Checked-off items disappear 24 hours after being checked off." },
       async () => {
         const todos = await getTodos(env);
         return text(todos.length ? todos.map(todoLine).join("\n") : "The to-do list is empty.");
@@ -284,7 +300,7 @@ function mcpServer(env: Env) {
         const todos = await getTodos(env);
         const t = findTodo(todos, item);
         if (!t) return text(`No to-do matches "${item}".`);
-        t.done = done ?? true;
+        setDone(t, done ?? true);
         await putTodos(env, todos);
         return text(`${t.done ? "Done" : "Reopened"}: ${t.text}`);
       },
@@ -355,7 +371,7 @@ export default {
         const todos = await getTodos(env);
         const t = todos.find((x) => x.id === m[1]);
         if (!t) return json({ error: "not found" }, 404);
-        if (m[2] && request.method === "POST") { t.done = !t.done; await putTodos(env, todos); return json(t); }
+        if (m[2] && request.method === "POST") { setDone(t, !t.done); await putTodos(env, todos); return json(t); }
         if (!m[2] && request.method === "DELETE") { await putTodos(env, todos.filter((x) => x !== t)); return json({ ok: true }); }
       }
       return json({ error: "not found" }, 404);
@@ -378,7 +394,7 @@ export default {
         const todos = await getTodos(env);
         const t = todos.find((x) => x.id === m[1]);
         if (!t) return json({ error: "not found" }, 404);
-        if (m[2] && request.method === "POST") { t.done = !t.done; await putTodos(env, todos); return json(t); }
+        if (m[2] && request.method === "POST") { setDone(t, !t.done); await putTodos(env, todos); return json(t); }
         if (!m[2] && request.method === "DELETE") { await putTodos(env, todos.filter((x) => x !== t)); return json({ ok: true }); }
       }
       return json({ error: "not found" }, 404);
