@@ -6,3 +6,4 @@
 #define HOME_LON -117.25
 #define WORKER_URL "https://skytile.<your-subdomain>.workers.dev"
 #define TILE_KEY "same value as the Worker's TILE_KEY secret"
+#define OTA_PASS "password for wireless updates (tools/ota.sh reads it from secrets.h)"

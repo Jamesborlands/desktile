@@ -7,6 +7,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <ArduinoOTA.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -396,6 +397,26 @@ static void worker_get(const char *path, void (*parse)(const String &)) {
   else Serial.printf("[net] %s HTTP %d\n", path, code);
 }
 
+// ---------------------------------------------------------------- wireless updates
+// tools/ota.sh builds and sends firmware to skytile.local over WiFi (password in
+// secrets.h). While an update runs, data fetching pauses and the screen shows progress.
+static volatile int g_ota_pct = -1;  // -1 idle, 0..100 updating, -2 failed
+
+static void ota_task(void *) {
+  ArduinoOTA.setHostname("skytile");  // also advertises skytile.local via mDNS
+  ArduinoOTA.setPassword(OTA_PASS);
+  ArduinoOTA.onStart([]() { g_ota_pct = 0; Serial.println("[ota] start"); });
+  ArduinoOTA.onProgress([](unsigned int done, unsigned int total) { g_ota_pct = total ? done * 100 / total : 0; });
+  ArduinoOTA.onEnd([]() { g_ota_pct = 100; Serial.println("[ota] done, rebooting"); });
+  ArduinoOTA.onError([](ota_error_t e) { g_ota_pct = -2; Serial.printf("[ota] error %d\n", (int)e); });
+  ArduinoOTA.begin();
+  Serial.println("[ota] ready at skytile.local");
+  for (;;) {
+    ArduinoOTA.handle();  // runs the whole transfer inside this call once an upload starts
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
 static void net_task(void *) {
   WiFi.persistent(false);  // no flash writes on (re)connect: they stall the display
   WiFi.mode(WIFI_STA);
@@ -420,7 +441,13 @@ static void net_task(void *) {
       vTaskDelay(pdMS_TO_TICKS(1000));
       continue;
     }
-    if (started) { Serial.printf("[net] WiFi up, IP %s\n", WiFi.localIP().toString().c_str()); started = 0; }
+    if (started) {
+      Serial.printf("[net] WiFi up, IP %s\n", WiFi.localIP().toString().c_str());
+      started = 0;
+      static bool ota_started = false;
+      if (!ota_started) { ota_started = true; xTaskCreatePinnedToCore(ota_task, "ota", 8192, nullptr, 1, nullptr, 0); }
+    }
+    if (g_ota_pct >= 0) { vTaskDelay(pdMS_TO_TICKS(500)); continue; }  // updating: leave the network to OTA
     if (!clock_set) {  // wall clock for launch countdowns, Pacific time
       configTzTime("PST8PDT,M3.2.0,M11.1.0", "pool.ntp.org", "time.google.com");
       clock_set = true;
@@ -523,6 +550,7 @@ static lv_obj_t *world;
 static lv_obj_t *iss_pos, *iss_alt, *iss_tag, *pass_when, *pass_info, *pass_dir, *pass_in;
 // widgets: to-do
 static lv_obj_t *scr_todo, *todo_list, *todo_head, *todo_empty;
+static lv_obj_t *ota_overlay, *ota_lbl, *ota_bar;
 
 static void set_text(lv_obj_t *l, const char *t) {
   if (strcmp(lv_label_get_text(l), t)) lv_label_set_text(l, t);
@@ -1541,6 +1569,23 @@ static void build_ui() {
   build_map_screen(scr);
   build_space_screen(scr);
   build_todo_screen(scr);
+
+  // full-screen "updating" overlay on the top layer
+  ota_overlay = mk_box(lv_layer_top(), 0, 0, 800, 480);
+  lv_obj_set_style_bg_opa(ota_overlay, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(ota_overlay, lv_color_hex(C_BG), 0);
+  ota_lbl = mk_label(ota_overlay, "Updating firmware", &lv_font_montserrat_24, C_TEXT, 0, 190);
+  lv_obj_set_width(ota_lbl, 800);
+  lv_obj_set_style_text_align(ota_lbl, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_t *track = mk_box(ota_overlay, 200, 240, 400, 8);
+  lv_obj_set_style_bg_opa(track, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(track, lv_color_hex(C_LINE), 0);
+  lv_obj_set_style_radius(track, 4, 0);
+  ota_bar = mk_box(track, 0, 0, 0, 8);
+  lv_obj_set_style_bg_opa(ota_bar, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(ota_bar, lv_color_hex(C_SPACE), 0);
+  lv_obj_set_style_radius(ota_bar, 4, 0);
+  lv_obj_add_flag(ota_overlay, LV_OBJ_FLAG_HIDDEN);
 }
 
 // ---------------------------------------------------------------- public
@@ -1562,6 +1607,24 @@ void app_init() {
 
 void app_loop() {
   static uint32_t last_bar = 0, last_view = 0, last_tick = 0;
+  static int ota_shown = -1;
+  if (g_ota_pct != ota_shown) {  // wireless update progress
+    ota_shown = g_ota_pct;
+    show(ota_overlay, ota_shown != -1);
+    if (ota_shown >= 0) {
+      char b[48];
+      snprintf(b, sizeof b, ota_shown < 100 ? "Updating firmware  %d%%" : "Update done, restarting", ota_shown);
+      set_text(ota_lbl, b);
+      lv_obj_set_width(ota_bar, 4 * ota_shown);
+    } else if (ota_shown == -2) {
+      set_text(ota_lbl, "Update failed. Still running the old version.");
+    }
+  }
+  if (g_ota_pct == -2) {  // hide the failure message after a few seconds
+    static uint32_t fail_at = 0;
+    if (!fail_at) fail_at = millis();
+    if (millis() - fail_at > 5000) { g_ota_pct = -1; fail_at = 0; }
+  }
   if ((g_pan_e != 0 || g_pan_n != 0) && millis() - g_last_touch > 120000) {  // idle: back to the overview
     g_pan_e = g_pan_n = 0;
     g_view_dirty = true;
