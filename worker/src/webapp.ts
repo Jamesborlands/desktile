@@ -64,7 +64,8 @@ const check = '<svg viewBox="0 0 16 16"><path d="M3 8.5l3.2 3L13 4.5" fill="none
 function render() {
   const list = $('list');
   list.textContent = '';
-  for (const t of todos) {
+  const sorted = [...todos.filter((t) => !t.done), ...todos.filter((t) => t.done)];  // open first
+  for (const t of sorted) {
     const li = document.createElement('li');
     if (t.done) li.className = 'done';
     const box = document.createElement('button');

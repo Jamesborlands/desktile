@@ -528,7 +528,7 @@ static const char *FILTER_NAMES[] = {"ALL", "INTERESTING", "FAVORITES"};
 static Filter g_filter = F_ALL;
 static uint32_t g_last_touch = 0;  // millis of the last touch (idle timer)
 static char g_sel[2][12] = {"", ""};  // selected item key: [0] plane hex, [1] ship MMSI
-static int g_todo_sel = 0;
+static int g_todo_sel = -1;  // knob cursor on the to-do list; -1 = hidden (no knob used yet)
 
 static int g_vis[MAXP];  // indices into the current map list (planes or ships) that are shown
 static int g_vis_n = 0;
@@ -1188,7 +1188,7 @@ static void refresh_todo() {
   char b[48];
   snprintf(b, sizeof b, g_td_n ? "%d LEFT OF %d" : "", left, g_td_n);
   set_text(todo_head, b);
-  if (g_todo_sel >= g_td_n) g_todo_sel = g_td_n ? g_td_n - 1 : 0;
+  if (g_todo_sel >= g_td_n) g_todo_sel = g_td_n ? g_td_n - 1 : -1;
   lv_obj_clean(todo_list);
   for (int i = 0; i < g_td_n; i++) {
     lv_obj_t *row = lv_obj_create(todo_list);
@@ -1220,24 +1220,34 @@ static void refresh_todo() {
   show(todo_empty, g_td_n == 0);
 }
 
+// Open items first, checked-off ones after (stable: keeps each group's order).
+static void sort_todos() {
+  for (int i = 1; i < g_td_n; i++) {
+    Todo k = g_td[i];
+    int j = i - 1;
+    while (j >= 0 && g_td[j].done && !k.done) { g_td[j + 1] = g_td[j]; j--; }
+    g_td[j + 1] = k;
+  }
+}
+
 static void toggle_todo(int i) {
   if (i < 0 || i >= g_td_n) return;
   g_td[i].done = !g_td[i].done;  // update the screen now; the Worker catches up
   xSemaphoreTake(g_mtx, portMAX_DELAY);
   if (g_tq_n < 8) strlcpy(g_tq[g_tq_n++], g_td[i].id, sizeof g_tq[0]);
   xSemaphoreGive(g_mtx);
+  sort_todos();
   refresh_todo();
 }
 
 static void on_todo_row(lv_event_t *e) {
   int i = (int)(intptr_t)lv_event_get_user_data(e);
-  g_todo_sel = i;
   toggle_todo(i);
 }
 
 static void todo_step(int d) {
   if (!g_td_n) return;
-  g_todo_sel = (g_todo_sel + d + g_td_n) % g_td_n;
+  g_todo_sel = g_todo_sel < 0 ? 0 : (g_todo_sel + d + g_td_n) % g_td_n;
   for (uint32_t k = 0; k < lv_obj_get_child_count(todo_list); k++) style_todo_row(lv_obj_get_child(todo_list, k), k);
   lv_obj_scroll_to_view(lv_obj_get_child(todo_list, g_todo_sel), LV_ANIM_ON);
 }
@@ -1510,7 +1520,7 @@ void app_input(InputEvt e) {
       else if (g_mode == M_TODO) todo_step(-1);
       break;
     case IN_SEL_PRESS:
-      if (g_mode == M_TODO) toggle_todo(g_todo_sel);
+      if (g_mode == M_TODO && g_todo_sel >= 0) toggle_todo(g_todo_sel);
       break;
     case IN_SEL_HOLD:
       if (g_mode == M_PLANES && g_sel[0][0]) { toggle_fav(g_sel[0]); refresh_all(); }
@@ -1883,6 +1893,7 @@ void app_loop() {
     if (!pending) {
       memcpy(g_td, g_td_net, sizeof(Todo) * g_td_net_n);
       g_td_n = g_td_net_n;
+      sort_todos();
       g_td_loaded = true;
     }
     g_td_new = false;
