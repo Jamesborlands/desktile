@@ -16,3 +16,4 @@ void app_loop();
 void app_input(InputEvt e);
 // Raw touch from the driver: n fingers (0-2) and their positions. Drives pinch zoom.
 void app_touch(int n, int x0, int y0, int x1, int y1);
+void app_sleep_on(int mode);  // debug over USB: switch mode (0..3) and go to sleep now

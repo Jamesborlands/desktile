@@ -23,6 +23,7 @@ LGFX gfx;
 uint16_t touch_x, touch_y;
 static esp_lcd_panel_handle_t rgb_panel = nullptr;
 static SemaphoreHandle_t vsync_sem = nullptr;
+static uint16_t *front_fb = nullptr;  // framebuffer currently on screen (for screenshots)
 
 static bool IRAM_ATTR on_rgb_vsync(esp_lcd_panel_handle_t panel,
                                   const esp_lcd_rgb_panel_event_data_t *event_data,
@@ -44,6 +45,7 @@ void my_disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
         rgb_panel, 0, 0, LCD_H_RES, LCD_V_RES, px_map);
     if (err == ESP_OK) {
       xSemaphoreTake(vsync_sem, pdMS_TO_TICKS(100));
+      front_fb = (uint16_t *)px_map;
     }
   }
   lv_display_flush_ready(disp);
@@ -222,9 +224,41 @@ void setup()
   Serial.println( "Setup done" );
 }
 
+// Screenshot over USB serial: send 'S' and the tile replies "SHOT 800 480", then one
+// line per row: "R<y> " + hex RLE runs (count u8, color u16 LE). Each row goes out in
+// a single write, so log lines from the network task can't land inside it.
+// tools/shot.py reads it.
+static void send_screenshot() {
+  if (!front_fb) return;
+  Serial.printf("SHOT %d %d\n", LCD_H_RES, LCD_V_RES);
+  static char line[16 + LCD_H_RES * 6 + 2];
+  static const char HEX_DIGITS[] = "0123456789abcdef";
+  for (int y = 0; y < LCD_V_RES; y++) {
+    const uint16_t *p = front_fb + y * LCD_H_RES, *end = p + LCD_H_RES;
+    int n = snprintf(line, 16, "R%d ", y);
+    while (p < end) {
+      uint16_t c = *p;
+      int run = 1;
+      while (p + run < end && run < 255 && p[run] == c) run++;
+      uint8_t b[3] = {(uint8_t)run, (uint8_t)(c & 0xff), (uint8_t)(c >> 8)};
+      for (uint8_t v : b) { line[n++] = HEX_DIGITS[v >> 4]; line[n++] = HEX_DIGITS[v & 15]; }
+      p += run;
+    }
+    line[n++] = '\n';
+    Serial.write((const uint8_t *)line, n);
+    esp_task_wdt_reset();
+  }
+  Serial.println("END");
+}
+
 void loop()
 {
   esp_task_wdt_reset();
+  if (Serial.available()) {  // USB debug commands: S = screenshot, 0..3 = sleep on that mode
+    int c = Serial.read();
+    if (c == 'S') send_screenshot();
+    else if (c >= '0' && c <= '3') app_sleep_on(c - '0');
+  }
   app_loop();
   lv_timer_handler(); /* let the GUI do its work */
   delay(1);

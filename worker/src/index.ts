@@ -50,6 +50,28 @@ async function cached(key: string, ttl: number, ctx: ExecutionContext, build: ()
   return data;
 }
 
+// Like cached(), but on a cache miss answer at once with the last good copy in KV
+// and rebuild in the background. Upstreams (Launch Library especially) can take 20 s,
+// longer than the tile waits. Only waits for the build when KV has nothing yet.
+async function cachedOrStale(env: Env, key: string, ttl: number, ctx: ExecutionContext, build: () => Promise<unknown>) {
+  const cache = caches.default;
+  const req = new Request(`https://cache.skytile/${key}`);
+  const hit = await cache.match(req);
+  if (hit) return hit.json();
+  const refresh = build().then(async (data) => {
+    await Promise.all([cache.put(req, json(data, 200, ttl)), env.TODOS.put(`cache:${key}`, JSON.stringify(data))]);
+    return data;
+  });
+  const stale = await env.TODOS.get(`cache:${key}`, "json");
+  if (stale) {
+    ctx.waitUntil(refresh.catch((err) => console.warn(`${key} refresh failed`, err)));
+    return stale;
+  }
+  return refresh;
+}
+
+const UPSTREAM_TIMEOUT = 8000;
+
 function distNm(lat1: number, lon1: number, lat2: number, lon2: number) {
   const r = Math.PI / 180;
   const a = Math.sin(((lat2 - lat1) * r) / 2) ** 2 + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(((lon2 - lon1) * r) / 2) ** 2;
@@ -80,7 +102,7 @@ const compass = (deg: number) => COMPASS[Math.round(((deg % 360) + 360) % 360 / 
 
 async function fetchLaunches(home: { lat: number; lon: number }) {
   try {
-    const r = await fetch("https://ll.thespacedevs.com/2.3.0/launches/upcoming/?limit=6&mode=normal", { headers: { "user-agent": UA } });
+    const r = await fetch("https://ll.thespacedevs.com/2.3.0/launches/upcoming/?limit=6&mode=normal", { headers: { "user-agent": UA }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT) });
     if (!r.ok) throw new Error(`Launch Library HTTP ${r.status}`);
     const d: any = await r.json();
     return (d.results ?? []).map((l: any) => {
@@ -102,7 +124,7 @@ async function fetchLaunches(home: { lat: number; lon: number }) {
   } catch (err) {
     console.warn("Launch Library failed, using RocketLaunch.live", err);
   }
-  const r = await fetch("https://fdo.rocketlaunch.live/json/launches/next/5", { headers: { "user-agent": UA } });
+  const r = await fetch("https://fdo.rocketlaunch.live/json/launches/next/5", { headers: { "user-agent": UA }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT) });
   if (!r.ok) throw new Error(`RocketLaunch.live HTTP ${r.status}`);
   const d: any = await r.json();
   return (d.result ?? []).map((l: any) => {
@@ -124,7 +146,7 @@ async function fetchLaunches(home: { lat: number; lon: number }) {
 
 async function fetchIssTle() {
   try {
-    const r = await fetch("https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE", { headers: { "user-agent": UA } });
+    const r = await fetch("https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE", { headers: { "user-agent": UA }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT) });
     if (!r.ok) throw new Error(`CelesTrak HTTP ${r.status}`);
     const lines = (await r.text()).trim().split(/\r?\n/).map((x) => x.trim());
     if (lines.length >= 3 && lines[1].startsWith("1 ")) return { l1: lines[1], l2: lines[2] };
@@ -132,7 +154,7 @@ async function fetchIssTle() {
   } catch (err) {
     console.warn("CelesTrak failed, trying tle.ivanstanojevic.me", err);
   }
-  const r = await fetch("https://tle.ivanstanojevic.me/api/tle/25544", { headers: { "user-agent": UA } });
+  const r = await fetch("https://tle.ivanstanojevic.me/api/tle/25544", { headers: { "user-agent": UA }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT) });
   if (!r.ok) throw new Error(`TLE API HTTP ${r.status}`);
   const d: any = await r.json();
   return { l1: d.line1, l2: d.line2 };
@@ -146,22 +168,20 @@ async function space(env: Env, ctx: ExecutionContext) {
   // then to the last good list saved in KV.
   let launches: any[] = [];
   try {
-    launches = (await cached("space/launches", 1800, ctx, () => fetchLaunches(home))) as any[];
-    ctx.waitUntil(env.TODOS.put("cache:launches", JSON.stringify(launches)));
+    launches = (await cachedOrStale(env, "space/launches", 1800, ctx, () => fetchLaunches(home))) as any[];
   } catch (err) {
     console.warn("launches failed", err);
-    launches = (await env.TODOS.get<any[]>("cache:launches", "json")) ?? [];
+    launches = (await env.TODOS.get<any[]>("cache:space/launches", "json")) ?? [];
   }
 
   // ISS orbit elements (TLE): CelesTrak, else tle.ivanstanojevic.me, else the last
   // good copy in KV (a TLE stays accurate enough for days). Cached 6 hours.
   let tle: { l1: string; l2: string } | null = null;
   try {
-    tle = (await cached("space/iss-tle", 21600, ctx, fetchIssTle)) as { l1: string; l2: string };
-    ctx.waitUntil(env.TODOS.put("cache:iss-tle", JSON.stringify(tle)));
+    tle = (await cachedOrStale(env, "space/iss-tle", 21600, ctx, fetchIssTle)) as { l1: string; l2: string };
   } catch (err) {
     console.warn("ISS TLE failed", err);
-    tle = await env.TODOS.get<{ l1: string; l2: string }>("cache:iss-tle", "json");
+    tle = await env.TODOS.get<{ l1: string; l2: string }>("cache:space/iss-tle", "json");
   }
   if (!tle) return { t: Math.floor(Date.now() / 1000), launches, iss: null, iss_pass: null };
   const rec = sat.twoline2satrec(tle.l1, tle.l2);

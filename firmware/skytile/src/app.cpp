@@ -392,13 +392,14 @@ static void fetch_route(const char *cs) {
   xSemaphoreGive(g_mtx);
 }
 
-static void worker_get(const char *path, void (*parse)(const String &)) {
+static bool worker_get(const char *path, void (*parse)(const String &)) {
   char url[128];
   snprintf(url, sizeof url, "%s%s", WORKER_URL, path);
   String body;
   int code;
-  if (http_req("GET", url, true, body, code)) parse(body);
-  else Serial.printf("[net] %s HTTP %d\n", path, code);
+  if (http_req("GET", url, true, body, code)) { parse(body); return true; }
+  Serial.printf("[net] %s HTTP %d\n", path, code);
+  return false;
 }
 
 // ---------------------------------------------------------------- wireless updates
@@ -491,7 +492,12 @@ static void net_task(void *) {
     // polls keep the Worker's aisstream collector awake, so the screen opens ready.
     if (!t_sh || now - t_sh >= (m == M_SHIPS ? 20000UL : 120000UL)) { t_sh = now; worker_get("/ships", parse_ships); }
     // Space: every minute on its screen (ISS moves), every 10 minutes otherwise.
-    if (!t_sp || now - t_sp >= (m == M_SPACE ? 60000UL : 600000UL)) { t_sp = now; worker_get("/space", parse_space); }
+    // A failed fetch retries after 30 s instead of waiting the full interval.
+    static bool sp_ok = false;
+    if (!t_sp || now - t_sp >= (m == M_SPACE || !sp_ok ? (sp_ok ? 60000UL : 30000UL) : 600000UL)) {
+      t_sp = now;
+      sp_ok = worker_get("/space", parse_space);
+    }
 
     // To-do check-offs from the screen, then a refresh.
     char q[8][10];
@@ -630,6 +636,11 @@ static void set_marker(int k, const lv_image_dsc_t *src, float hdg_deg, uint16_t
   int rot = ((int)lroundf(hdg_deg * 10) % 3600 + 3600) % 3600;  // 0.1 degree units
   if (lv_image_get_rotation(img) != rot) lv_image_set_rotation(img, rot);
   if (lv_image_get_scale(img) != scale) lv_image_set_scale(img, scale);
+  // styles only on change: each set redraws the icon even with the same value
+  static uint64_t last[MAXP];
+  uint64_t key = (uint64_t)tint << 16 | tint_opa << 8 | opa | 1ull << 40;
+  if (last[k] == key) return;
+  last[k] = key;
   lv_obj_set_style_image_recolor(img, lv_color_hex(tint), 0);
   lv_obj_set_style_image_recolor_opa(img, tint_opa, 0);
   lv_obj_set_style_image_opa(img, opa, 0);
@@ -886,11 +897,35 @@ static void draw_geo(lv_event_t *e) {
   lv_layer_t *layer = lv_event_get_layer(e);
   lv_area_t a;
   lv_obj_get_coords(geo, &a);
+  // Bounding box of each line (computed once). Small redraws (a label changing on
+  // top of the map) then skip the lines that can't touch the redrawn area instead
+  // of projecting the whole coastline: less PSRAM traffic, so the panel scan-out
+  // doesn't starve.
+  static int32_t (*bb)[4] = nullptr;  // min lat, min lon, max lat, max lon (1e-4 deg)
+  if (!bb) {
+    bb = (int32_t(*)[4])heap_caps_malloc(sizeof(int32_t[4]) * MAP_LINE_COUNT, MALLOC_CAP_SPIRAM);
+    for (int i = 0; i < MAP_LINE_COUNT; i++) {
+      const MapLine &m = MAP_LINES[i];
+      bb[i][0] = bb[i][2] = MAP_PTS[m.start][0];
+      bb[i][1] = bb[i][3] = MAP_PTS[m.start][1];
+      for (int k = 1; k < m.count; k++) {
+        const int32_t *p = MAP_PTS[m.start + k];
+        bb[i][0] = min(bb[i][0], p[0]); bb[i][2] = max(bb[i][2], p[0]);
+        bb[i][1] = min(bb[i][1], p[1]); bb[i][3] = max(bb[i][3], p[1]);
+      }
+    }
+  }
+  const lv_area_t &clip = layer->_clip_area;
   lv_draw_line_dsc_t ln;
   lv_draw_line_dsc_init(&ln);
   ln.round_start = ln.round_end = 1;
   for (int i = 0; i < MAP_LINE_COUNT; i++) {
     const MapLine &m = MAP_LINES[i];
+    float bx0, by0, bx1, by1;  // projection is linear: two corners give the screen box
+    project(bb[i][2] / 1e4f, bb[i][1] / 1e4f, bx0, by0);
+    project(bb[i][0] / 1e4f, bb[i][3] / 1e4f, bx1, by1);
+    if (a.x1 + bx1 < clip.x1 - 4 || a.x1 + bx0 > clip.x2 + 4 || a.y1 + by1 < clip.y1 - 4 || a.y1 + by0 > clip.y2 + 4)
+      continue;
     ln.color = lv_color_hex(m.border ? 0x5a3f57 : 0x3a5070);  // soft slate coast, muted border
     ln.width = m.border ? 1 : 2;
     ln.dash_width = m.border ? 6 : 0;
@@ -964,6 +999,9 @@ static void refresh_map() {
     }
   }
   bool ships = g_mode == M_SHIPS;
+  // Many icons moving = more dirty areas than LVGL tracks (32), and it then redraws
+  // the whole screen. One area for the map keeps the rest (dashboard column) untouched.
+  if (g_vis_n > 10) lv_obj_invalidate(map_obj);
   for (int i = g_vis_n; i < MAXP; i++) {
     lv_obj_add_flag(mk[i], LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(mk_lbl[i], LV_OBJ_FLAG_HIDDEN);
@@ -1002,9 +1040,13 @@ static void refresh_map() {
     }
     set_text(mk_lbl[k], label);
     lv_obj_set_pos(mk_lbl[k], (int)px + 16, (int)py - 8);
-    lv_obj_set_style_text_color(mk_lbl[k], lv_color_hex(on ? C_BG : C_MUTED), 0);
-    lv_obj_set_style_bg_opa(mk_lbl[k], on ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-    lv_obj_set_style_bg_color(mk_lbl[k], lv_color_hex(C_AMBER), 0);
+    static int8_t lbl_on[MAXP];  // 0 = not set yet, 1 = plain, 2 = selected (styles only on change)
+    if (lbl_on[k] != (on ? 2 : 1)) {
+      lbl_on[k] = on ? 2 : 1;
+      lv_obj_set_style_text_color(mk_lbl[k], lv_color_hex(on ? C_BG : C_MUTED), 0);
+      lv_obj_set_style_bg_opa(mk_lbl[k], on ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+      lv_obj_set_style_bg_color(mk_lbl[k], lv_color_hex(C_AMBER), 0);
+    }
     if (on) { lv_obj_move_foreground(m); lv_obj_move_foreground(mk_lbl[k]); }
   }
   // Label placement: selected first, then nearest first (list order). A label only
@@ -1315,7 +1357,9 @@ static void set_map_full(bool full) {
 
 static void refresh_idle_tag() {
   int pos = selected_pos();
-  lv_obj_set_style_text_color(tag_eye, lv_color_hex(MODE_ACCENT[g_mode]), 0);
+  // only on change: setting a style redraws the map under the tag, even with the same color
+  static int eye_mode = -1;
+  if (eye_mode != g_mode) { eye_mode = g_mode; lv_obj_set_style_text_color(tag_eye, lv_color_hex(MODE_ACCENT[g_mode]), 0); }
   char b[96];
   if (pos < 0) {
     set_text(tag_eye, MODE_NAMES[g_mode]);
@@ -1654,6 +1698,12 @@ static void on_map_click(lv_event_t *e) {
 }
 
 // Two-finger pinch zoom (called from the touch driver every read).
+void app_sleep_on(int mode) {
+  if (g_idle) wake();
+  set_mode((Mode)mode);
+  go_idle();
+}
+
 void app_touch(int n, int x0, int y0, int x1, int y1) {
   static bool pinching = false;
   if (n > 0) g_last_touch = millis();
