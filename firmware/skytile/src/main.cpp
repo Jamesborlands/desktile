@@ -33,6 +33,7 @@ static bool IRAM_ATTR on_rgb_vsync(esp_lcd_panel_handle_t panel,
   return task_woken == pdTRUE;
 }
 
+
 //  Display refresh
 void my_disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   // In DIRECT mode LVGL can report several dirty areas for one frame.  The
