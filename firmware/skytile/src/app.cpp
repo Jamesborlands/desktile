@@ -19,6 +19,7 @@
 #include "knobs.h"
 #include "map_icons.h"
 #include "mapdata.h"
+#include "hotspots.h"
 #include "worlddata.h"
 #include "tower_icon.h"
 #include "secrets.h"
@@ -29,7 +30,7 @@ static const int MAXRAW = 600;         // planes parsed per fetch before trimmin
 static const int MAXS = 80;            // ships kept
 static const int MAXT = 30;            // to-dos kept
 static const int MAXL = 6;             // launches kept
-static const float RANGE_MIN = 5, RANGE_MAX = 100, RANGE_DEFAULT = 25;  // outer ring radius, nm
+static const float RANGE_MIN = 5, RANGE_MAX = 250, RANGE_DEFAULT = 25;  // outer ring radius, nm
 static const uint32_t FETCH_MS = 10000;
 
 static const int MAP_W = 500, MAP_H = 436, BAR_H = 44;
@@ -39,14 +40,20 @@ static inline float ring_px() { return g_mh / 2 - 20; }  // outer range ring rad
 
 static volatile float g_range = RANGE_DEFAULT;  // current map range (nm); read by the net task too
 static bool g_lite_map = false;  // set while dragging/pinching: coarser coastline, faster redraws
-static volatile float g_pan_e = 0, g_pan_n = 0;  // view center offset from home, nm east / north
-static const float KLON = 60.0f * 0.8389f;       // nm per degree of longitude at home (cos 32.95)
+static volatile float g_pan_e = 0, g_pan_n = 0;  // view center offset from the hotspot, nm east / north
 
-// Map projection: local flat-earth around home, north up, px relative to the map.
+// Hotspot = where the map is centered: 0 is home (San Diego), the rest are busy
+// straits and ports around the world (hotspots.h). Tap the map's place button or
+// hold the top knob to cycle.
+static volatile int g_hs = 0;
+static volatile float g_clat = HOME_LAT, g_clon = HOME_LON;  // map center (hotspot)
+static volatile float g_klon = 60.0f * 0.8389f;              // nm per degree of longitude there
+
+// Map projection: local flat-earth around the hotspot, north up, px relative to the map.
 static inline void project(float lat, float lon, float &x, float &y) {
   float ppn = ring_px() / g_range;
-  x = g_mw / 2 + ((lon - HOME_LON) * KLON - g_pan_e) * ppn;
-  y = g_mh / 2 - ((lat - HOME_LAT) * 60.0f - g_pan_n) * ppn;
+  x = g_mw / 2 + ((lon - g_clon) * g_klon - g_pan_e) * ppn;
+  y = g_mh / 2 - ((lat - g_clat) * 60.0f - g_pan_n) * ppn;
 }
 
 static const uint32_t C_BG = 0x0a1220, C_LINE = 0x1a2740, C_MUTED = 0x8796ad,
@@ -172,7 +179,9 @@ static PsramAllocator g_psram_alloc;
 static bool http_req(const char *method, const char *url, bool worker, String &out, int &code) {
   WiFiClientSecure client;
   client.setInsecure();  // TODO: pin CAs
+  client.setHandshakeTimeout(10);  // seconds; the 120 s default let a hung adsb.lol stall every feed
   HTTPClient http;
+  http.setConnectTimeout(8000);
   http.setTimeout(8000);
   http.setUserAgent("SkyTile/0.1 (DIY desk display)");  // adsb.lol rejects generic agents
   if (!http.begin(client, url)) { code = -1; return false; }
@@ -184,7 +193,7 @@ static bool http_req(const char *method, const char *url, bool worker, String &o
   return ok;
 }
 
-static void parse_planes(const String &body, float clat, float clon) {
+static void parse_planes(const String &body, float clat, float clon, float hlat, float hlon, float klon) {
   JsonDocument filter(&g_psram_alloc);
   JsonObject f = filter["ac"].add<JsonObject>();
   for (auto k : {"hex", "flight", "t", "r", "desc", "alt_baro", "gs", "track", "lat", "lon", "dbFlags", "category"})
@@ -214,15 +223,15 @@ static void parse_planes(const String &body, float clat, float clon) {
     p.lat = a["lat"];
     p.lon = a["lon"];
     p.mil = ((a["dbFlags"] | 0) & 1) != 0;
-    float dx = (p.lon - HOME_LON) * KLON;
-    float dy = (p.lat - HOME_LAT) * 60.0f;
+    float dx = (p.lon - hlon) * klon;  // distance from the hotspot center (home for San Diego)
+    float dy = (p.lat - hlat) * 60.0f;
     p.dist_nm = sqrtf(dx * dx + dy * dy);
     if (!p.flight[0]) strlcpy(p.flight, p.reg[0] ? p.reg : p.hex, sizeof p.flight);
     n++;
   }
   // nearest to the view center first (that's what is on screen)
   auto key = [&](const Plane &q) {
-    float ex = (q.lon - clon) * KLON, ny = (q.lat - clat) * 60.0f;
+    float ex = (q.lon - clon) * klon, ny = (q.lat - clat) * 60.0f;
     return ex * ex + ny * ny;
   };
   for (int i = 1; i < n; i++) {
@@ -433,6 +442,7 @@ static void net_task(void *) {
   int last_nm = 0;
   float last_e = 0, last_n = 0;
   Mode last_mode = g_mode;
+  int last_hs = g_hs;
   for (;;) {
     if (WiFi.status() != WL_CONNECTED) {
       g_net_status = 0;
@@ -466,11 +476,14 @@ static void net_task(void *) {
       if (m == M_TODO) t_td = 0;
       last_mode = m;
     }
+    int hs = g_hs;
+    if (hs != last_hs) { t_pl = t_sh = 0; last_hs = hs; }  // new hotspot: fetch its planes and ships now
+    float hlat = g_clat, hlon = g_clon, klon = g_klon;
     uint32_t now = millis();
 
     // Planes: every 10 s on the Planes screen, every minute otherwise.
     float want = g_range * sqrtf((float)g_mw * g_mw + (float)g_mh * g_mh) / 2 / ring_px();  // reach the map corners
-    int nm = want <= 30 ? 30 : (want <= 60 ? 60 : 130);
+    int nm = want <= 30 ? 30 : (want <= 60 ? 60 : (want <= 130 ? 130 : 250));  // adsb.lol max is 250
     float pe = g_pan_e, pn = g_pan_n;
     bool moved = m == M_PLANES && fabsf(pe - last_e) + fabsf(pn - last_n) > nm * 0.3f;
     if (!t_pl || now - t_pl >= (m == M_PLANES ? FETCH_MS : 60000) || (m == M_PLANES && nm > last_nm) || moved) {
@@ -478,19 +491,31 @@ static void net_task(void *) {
       last_nm = nm;
       last_e = pe;
       last_n = pn;
-      float clat = HOME_LAT + pn / 60.0f, clon = HOME_LON + pe / KLON;
+      float clat = hlat + pn / 60.0f, clon = hlon + pe / klon;
       Serial.printf("[mem] internal free %u, largest %u\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
       char url[128];
       snprintf(url, sizeof url, "https://api.adsb.lol/v2/point/%.4f/%.4f/%d", clat, clon, nm);
       String body;
       int code;
       static int fails = 0;  // one rate-limited fetch (HTTP 429) is normal: keep showing the last data
-      if (http_req("GET", url, false, body, code)) { fails = 0; parse_planes(body, clat, clon); }
+      if (http_req("GET", url, false, body, code)) {
+        fails = 0;
+        if (g_hs == hs) parse_planes(body, clat, clon, hlat, hlon, klon);  // skip if the hotspot changed meanwhile
+      }
       else { Serial.printf("[net] planes HTTP %d\n", code); if (++fails >= 3) g_net_status = 2; }
     }
     // Ships: every 20 s on the Ships screen, every 2 min otherwise. The background
     // polls keep the Worker's aisstream collector awake, so the screen opens ready.
-    if (!t_sh || now - t_sh >= (m == M_SHIPS ? 20000UL : 120000UL)) { t_sh = now; worker_get("/ships", parse_ships); }
+    // Away from home the Worker's first collection for a hotspot takes ~30 s, so poll faster until ships show up.
+    if (!t_sh || now - t_sh >= (m == M_SHIPS ? (g_sh_net_n ? 20000UL : 10000UL) : 120000UL)) {
+      t_sh = now;
+      char url[128];
+      snprintf(url, sizeof url, "%s/ships?r=%s", WORKER_URL, HOTSPOTS[hs].id);
+      String body;
+      int code;
+      if (!http_req("GET", url, true, body, code)) Serial.printf("[net] ships HTTP %d\n", code);
+      else if (g_hs == hs) parse_ships(body);
+    }
     // Space: every minute on its screen (ISS moves), every 10 minutes otherwise.
     // A failed fetch retries after 30 s instead of waiting the full interval.
     static bool sp_ok = false;
@@ -529,9 +554,9 @@ static void net_task(void *) {
 }
 
 // ---------------------------------------------------------------- UI state
-enum Filter { F_ALL, F_INTERESTING, F_FAVS };
+enum Filter { F_ALL, F_MIL, F_INTERESTING, F_FAVS };
 static const char *MODE_NAMES[] = {"PLANES", "SHIPS", "SPACE", "TO-DO"};
-static const char *FILTER_NAMES[] = {"ALL", "INTERESTING", "FAVORITES"};
+static const char *FILTER_NAMES[] = {"ALL", "MILITARY", "INTERESTING", "FAVORITES"};
 
 static Filter g_filter = F_ALL;
 static uint32_t g_last_touch = 0;  // millis of the last touch (idle timer)
@@ -550,6 +575,7 @@ static lv_obj_t *fchip, *chip_filter_lbl, *chip_status_lbl, *chip_dot, *bar_obj,
 // widgets: map screen (Planes + Ships)
 static lv_obj_t *scr_map;
 static lv_obj_t *map_obj, *geo, *empty_lbl, *ring_lbl[2], *ring_obj[2], *home_obj, *recenter_btn;
+static lv_obj_t *hs_btn, *hs_lbl;  // place button (top-left of the map): tap = next hotspot, hold = home
 static lv_obj_t *mk[MAXP], *mk_img[MAXP], *mk_lbl[MAXP];
 static lv_obj_t *c_type;
 static lv_obj_t *c_eye, *c_call, *c_desc, *c_tag, *c_route, *c_cities, *c_reg, *c_favbtn, *c_favbtn_lbl;
@@ -716,6 +742,7 @@ static void rebuild_visible() {
     if (g_mode == M_PLANES) {
       const Plane &p = g_pl[i];
       if (p.alt < 0) continue;  // on the ground: hidden (too noisy at airports)
+      if (g_filter == F_MIL && !p.mil) continue;
       if (g_filter == F_INTERESTING && !is_interesting(p)) continue;
       if (g_filter == F_FAVS && !is_fav(p.hex)) continue;
     } else if (g_idle) {
@@ -891,27 +918,23 @@ static const Airport AIRPORTS[] = {
     {"MXL", 32.6306f, -115.2416f, true},
 };
 
-// Draws coastline, border and airports straight into the map's layer: one
-// object instead of dozens, and it only repaints when the view changes.
-static void draw_geo(lv_event_t *e) {
-  lv_layer_t *layer = lv_event_get_layer(e);
-  lv_area_t a;
-  lv_obj_get_coords(geo, &a);
-  // Bounding box of each line (computed once). Small redraws (a label changing on
-  // top of the map) then skip the lines that can't touch the redrawn area instead
-  // of projecting the whole coastline: less PSRAM traffic, so the panel scan-out
-  // doesn't starve.
-  static int32_t (*bb)[4] = nullptr;  // min lat, min lon, max lat, max lon (1e-4 deg)
-  if (!bb) {
-    bb = (int32_t(*)[4])heap_caps_malloc(sizeof(int32_t[4]) * MAP_LINE_COUNT, MALLOC_CAP_SPIRAM);
-    for (int i = 0; i < MAP_LINE_COUNT; i++) {
-      const MapLine &m = MAP_LINES[i];
-      bb[i][0] = bb[i][2] = MAP_PTS[m.start][0];
-      bb[i][1] = bb[i][3] = MAP_PTS[m.start][1];
+// One set of polylines (home OSM coastline, or the hotspot coastlines).
+// Bounding box of each line is computed once. Small redraws (a label changing on
+// top of the map) then skip the lines that can't touch the redrawn area instead
+// of projecting the whole coastline: less PSRAM traffic, so the panel scan-out
+// doesn't starve. Lines near other hotspots fall outside the view the same way.
+struct GeoSet { const int32_t (*pts)[2]; const MapLine *lines; int count; int32_t (*bb)[4]; };
+static void draw_lines(lv_layer_t *layer, const lv_area_t &a, GeoSet &g) {
+  if (!g.bb) {  // min lat, min lon, max lat, max lon (1e-4 deg)
+    g.bb = (int32_t(*)[4])heap_caps_malloc(sizeof(int32_t[4]) * g.count, MALLOC_CAP_SPIRAM);
+    for (int i = 0; i < g.count; i++) {
+      const MapLine &m = g.lines[i];
+      g.bb[i][0] = g.bb[i][2] = g.pts[m.start][0];
+      g.bb[i][1] = g.bb[i][3] = g.pts[m.start][1];
       for (int k = 1; k < m.count; k++) {
-        const int32_t *p = MAP_PTS[m.start + k];
-        bb[i][0] = min(bb[i][0], p[0]); bb[i][2] = max(bb[i][2], p[0]);
-        bb[i][1] = min(bb[i][1], p[1]); bb[i][3] = max(bb[i][3], p[1]);
+        const int32_t *p = g.pts[m.start + k];
+        g.bb[i][0] = min(g.bb[i][0], p[0]); g.bb[i][2] = max(g.bb[i][2], p[0]);
+        g.bb[i][1] = min(g.bb[i][1], p[1]); g.bb[i][3] = max(g.bb[i][3], p[1]);
       }
     }
   }
@@ -919,11 +942,11 @@ static void draw_geo(lv_event_t *e) {
   lv_draw_line_dsc_t ln;
   lv_draw_line_dsc_init(&ln);
   ln.round_start = ln.round_end = 1;
-  for (int i = 0; i < MAP_LINE_COUNT; i++) {
-    const MapLine &m = MAP_LINES[i];
+  for (int i = 0; i < g.count; i++) {
+    const MapLine &m = g.lines[i];
     float bx0, by0, bx1, by1;  // projection is linear: two corners give the screen box
-    project(bb[i][2] / 1e4f, bb[i][1] / 1e4f, bx0, by0);
-    project(bb[i][0] / 1e4f, bb[i][3] / 1e4f, bx1, by1);
+    project(g.bb[i][2] / 1e4f, g.bb[i][1] / 1e4f, bx0, by0);
+    project(g.bb[i][0] / 1e4f, g.bb[i][3] / 1e4f, bx1, by1);
     if (a.x1 + bx1 < clip.x1 - 4 || a.x1 + bx0 > clip.x2 + 4 || a.y1 + by1 < clip.y1 - 4 || a.y1 + by0 > clip.y2 + 4)
       continue;
     ln.color = lv_color_hex(m.border ? 0x5a3f57 : 0x3a5070);  // soft slate coast, muted border
@@ -931,12 +954,12 @@ static void draw_geo(lv_event_t *e) {
     ln.dash_width = m.border ? 6 : 0;
     ln.dash_gap = m.border ? 5 : 0;
     float px0, py0;
-    project(MAP_PTS[m.start][0] / 1e4f, MAP_PTS[m.start][1] / 1e4f, px0, py0);
+    project(g.pts[m.start][0] / 1e4f, g.pts[m.start][1] / 1e4f, px0, py0);
     int step = g_lite_map ? 4 : 1;
     for (int k = step; k < m.count + step - 1; k += step) {
       if (k >= m.count) k = m.count - 1;  // always end on the last point
       float px1, py1;
-      project(MAP_PTS[m.start + k][0] / 1e4f, MAP_PTS[m.start + k][1] / 1e4f, px1, py1);
+      project(g.pts[m.start + k][0] / 1e4f, g.pts[m.start + k][1] / 1e4f, px1, py1);
       bool off = (px0 < -40 && px1 < -40) || (px0 > g_mw + 40 && px1 > g_mw + 40) ||
                  (py0 < -40 && py1 < -40) || (py0 > g_mh + 40 && py1 > g_mh + 40);
       if (!off) {
@@ -947,6 +970,18 @@ static void draw_geo(lv_event_t *e) {
       px0 = px1; py0 = py1;
     }
   }
+}
+
+// Draws coastline, border and airports straight into the map's layer: one
+// object instead of dozens, and it only repaints when the view changes.
+static void draw_geo(lv_event_t *e) {
+  lv_layer_t *layer = lv_event_get_layer(e);
+  lv_area_t a;
+  lv_obj_get_coords(geo, &a);
+  static GeoSet home = {MAP_PTS, MAP_LINES, MAP_LINE_COUNT, nullptr};
+  static GeoSet world = {HS_PTS, HS_LINES, HS_LINE_COUNT, nullptr};
+  if (g_hs == 0) draw_lines(layer, a, home);
+  else draw_lines(layer, a, world);
   if (g_mode != M_PLANES) return;  // airports only matter for planes
   // airports: control tower icon (base on the airport) plus the code
   lv_draw_image_dsc_t ti;
@@ -973,16 +1008,17 @@ static void draw_geo(lv_event_t *e) {
 
 static void refresh_map() {
   static float geo_range = -1, geo_e = 1e9, geo_n = 1e9;
-  static int geo_mode = -1, geo_w = -1;
-  if (geo_range != g_range || geo_e != g_pan_e || geo_n != g_pan_n || geo_mode != g_mode || geo_w != g_mw) {
+  static int geo_mode = -1, geo_w = -1, geo_hs = -1;
+  if (geo_range != g_range || geo_e != g_pan_e || geo_n != g_pan_n || geo_mode != g_mode || geo_w != g_mw || geo_hs != g_hs) {
     geo_w = g_mw;
+    geo_hs = g_hs;
     geo_range = g_range;
     geo_e = g_pan_e;
     geo_n = g_pan_n;
     geo_mode = g_mode;
     lv_obj_invalidate(geo);
-    float hx, hy;  // home position on screen: rings are distance from home
-    project(HOME_LAT, HOME_LON, hx, hy);
+    float hx, hy;  // hotspot center on screen (home in San Diego): rings are distance from it
+    project(g_clat, g_clon, hx, hy);
     for (int r = 0; r < 2; r++) {
       int rad = ring_px() * (r + 1) / 2;
       lv_obj_set_size(ring_obj[r], rad * 2, rad * 2);
@@ -990,6 +1026,10 @@ static void refresh_map() {
       lv_obj_set_pos(ring_lbl[r], (int)(hx + rad * 0.707f) + 4, (int)(hy + rad * 0.707f) - 4);
     }
     lv_obj_set_pos(home_obj, (int)hx - 4, (int)hy - 4);
+    show(home_obj, g_hs == 0);
+    char hb[48];
+    snprintf(hb, sizeof hb, LV_SYMBOL_GPS "  %s  " LV_SYMBOL_RIGHT, HOTSPOTS[g_hs].label);
+    set_text(hs_lbl, hb);
     show(recenter_btn, (g_pan_e != 0 || g_pan_n != 0) && g_mw == MAP_W);
     char b[16];
     for (int r = 0; r < 2; r++) {
@@ -1335,6 +1375,7 @@ static void apply_backlight() {
 
 static void refresh_all();
 static void set_mode(Mode m);
+static void set_hotspot(int i);
 
 // Idle dashboard: live map on the left (full height), and a column on the right with
 // the time, open to-dos and the next launch countdown.
@@ -1609,7 +1650,11 @@ void app_input(InputEvt e) {
     case IN_MODE_NEXT: set_mode((Mode)((g_mode + 1) % 4)); break;
     case IN_MODE_PREV: set_mode((Mode)((g_mode + 3) % 4)); break;
     case IN_MODE_PRESS:
-      if (g_mode == M_PLANES) { g_filter = (Filter)((g_filter + 1) % 3); refresh_all(); }
+      if (g_mode == M_PLANES) { g_filter = (Filter)((g_filter + 1) % 4); refresh_all(); }
+      break;
+    case IN_MODE_HOLD:  // next hotspot (jumps to the map if you're on Space or To-do)
+      if (!map_mode()) set_mode(M_PLANES);
+      set_hotspot(g_hs + 1);
       break;
     case IN_SEL_NEXT:
       if (map_mode()) select_step(1);
@@ -1649,7 +1694,7 @@ static volatile bool g_view_dirty = false;  // map needs a redraw (drag / pinch)
 // One-finger drag pans the map.
 static bool g_dragging = false;
 static void clamp_pan() {
-  const float LIM = 100;  // stay within the coastline data
+  const float LIM = g_hs == 0 ? 100 : max(HOTSPOTS[g_hs].range[0], HOTSPOTS[g_hs].range[1]);  // stay within the coastline data
   if (g_pan_e > LIM) g_pan_e = LIM;
   if (g_pan_e < -LIM) g_pan_e = -LIM;
   if (g_pan_n > LIM) g_pan_n = LIM;
@@ -1673,6 +1718,34 @@ static void on_map_press(lv_event_t *e) {
 static void on_recenter(lv_event_t *) {
   g_pan_e = g_pan_n = 0;
   refresh_all();
+}
+
+// Jump the map to a hotspot: its center, its default zooms and planes filter, fresh data.
+static void set_hotspot(int i) {
+  i = (i + HOTSPOT_COUNT) % HOTSPOT_COUNT;
+  const Hotspot &h = HOTSPOTS[i];
+  xSemaphoreTake(g_mtx, portMAX_DELAY);  // drop the old place's planes and ships
+  g_hs = i;
+  g_clat = i == 0 ? HOME_LAT : h.lat;
+  g_clon = i == 0 ? HOME_LON : h.lon;
+  g_klon = 60.0f * cosf(g_clat * DEG_TO_RAD);
+  g_pl_n = g_sh_n = g_net_n = g_sh_net_n = 0;
+  g_net_new = g_sh_new = false;
+  xSemaphoreGive(g_mtx);
+  g_sh_loaded = false;
+  g_pan_e = g_pan_n = 0;
+  g_mode_range[0] = h.range[0];
+  g_mode_range[1] = h.range[1];
+  if (map_mode()) g_range = g_mode_range[sel_slot()];
+  g_filter = (Filter)h.filter;
+  g_sel[0][0] = g_sel[1][0] = 0;
+  g_prefs.putUChar("hs", i);
+  Serial.printf("[ui] hotspot %s\n", h.id);
+  refresh_all();
+}
+static void on_hotspot(lv_event_t *e) {
+  g_last_touch = millis();
+  set_hotspot(lv_event_get_code(e) == LV_EVENT_LONG_PRESSED ? 0 : g_hs + 1);
 }
 
 // Tap anywhere on the map: select the nearest item within finger distance.
@@ -1782,6 +1855,21 @@ static void build_map_screen(lv_obj_t *scr) {
   lv_obj_add_flag(recenter_btn, LV_OBJ_FLAG_HIDDEN);
   zoom_btn[0] = mk_btn(map_obj, "+", 14, MAP_H - 94, 44, 38, on_zoom, (void *)(intptr_t)-1);  // zoom in = smaller range
   zoom_btn[1] = mk_btn(map_obj, "-", 14, MAP_H - 50, 44, 38, on_zoom, (void *)(intptr_t)1);
+  hs_btn = mk_box(map_obj, 10, 10, LV_SIZE_CONTENT, 34);
+  lv_obj_set_style_bg_opa(hs_btn, LV_OPA_80, 0);
+  lv_obj_set_style_bg_color(hs_btn, lv_color_hex(0x0e182a), 0);
+  lv_obj_set_style_bg_color(hs_btn, lv_color_hex(0x1c2b47), LV_STATE_PRESSED);
+  lv_obj_set_style_border_width(hs_btn, 1, 0);
+  lv_obj_set_style_border_color(hs_btn, lv_color_hex(0x2b3c57), 0);
+  lv_obj_set_style_radius(hs_btn, 17, 0);
+  lv_obj_set_style_pad_hor(hs_btn, 14, 0);
+  lv_obj_set_ext_click_area(hs_btn, 8);
+  lv_obj_add_flag(hs_btn, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(hs_btn, on_hotspot, LV_EVENT_SHORT_CLICKED, nullptr);
+  lv_obj_add_event_cb(hs_btn, on_hotspot, LV_EVENT_LONG_PRESSED, nullptr);
+  hs_lbl = mk_label(hs_btn, "", &lv_font_montserrat_12, 0xc9d3e2, 0, 0);
+  lv_obj_set_style_text_letter_space(hs_lbl, 1, 0);
+  lv_obj_align(hs_lbl, LV_ALIGN_LEFT_MID, 0, 0);
 
   lv_obj_t *card = map_card = mk_card(scr_map, MAP_W, 800 - MAP_W);
   c_eye = mk_label(card, "", &lv_font_montserrat_12, C_MUTED, 20, 18);
@@ -1936,6 +2024,8 @@ void app_init() {
   if (g_favs.length() == 0 || g_favs[0] != ',') g_favs = "," + g_favs;
   build_ui();
   knobs_init();
+  int hs = g_prefs.getUChar("hs", 0);  // last hotspot survives the nightly restart
+  if (hs > 0 && hs < HOTSPOT_COUNT) set_hotspot(hs);
   refresh_all();
   xTaskCreatePinnedToCore(net_task, "net", 16384, nullptr, 1, nullptr, 0);
 }

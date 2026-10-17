@@ -86,5 +86,5 @@ void knobs_poll() {
   if (now - last_poll < POLL_MS) return;
   last_poll = now;
   if (k_bottom.present) poll_one(k_bottom, IN_SEL_NEXT, IN_SEL_PREV, IN_SEL_PRESS, IN_SEL_HOLD);
-  if (k_top.present) poll_one(k_top, IN_MODE_NEXT, IN_MODE_PREV, IN_MODE_PRESS, IN_MODE_PRESS);
+  if (k_top.present) poll_one(k_top, IN_MODE_NEXT, IN_MODE_PREV, IN_MODE_PRESS, IN_MODE_HOLD);
 }

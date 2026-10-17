@@ -1,7 +1,8 @@
-// Ships near San Diego from aisstream.io.
+// Ships from aisstream.io, for San Diego and a few world hotspots.
 // aisstream is a firehose WebSocket, too heavy for the ESP32. This Durable Object
-// connects for ~25 s once a minute, but only while the tile has asked for ships in
-// the last 15 minutes, and keeps a small vessel cache the tile can poll.
+// connects for ~25 s once a minute and keeps a vessel cache the tile can poll. It only
+// subscribes to the regions the tile has asked for in the last 15 minutes, all on one
+// connection (one bounding box per region).
 import { DurableObject } from "cloudflare:workers";
 
 type Vessel = {
@@ -18,10 +19,39 @@ type Vessel = {
   seen: number; // unix ms of last position
 };
 
+// Hotspots. The tile has the same ids (firmware tools/hotspotgen.py). r = box half-size, nm.
+export type Region = { lat: number; lon: number; r: number };
+export const REGIONS: Record<string, Region> = {
+  sandiego: { lat: 32.95, lon: -117.25, r: 0 }, // box below (mostly offshore)
+  hormuz: { lat: 26.35, lon: 56.45, r: 90 },
+  gulf: { lat: 26.5, lon: 52.0, r: 260 },
+  dover: { lat: 51.0, lon: 1.45, r: 60 },
+  rotterdam: { lat: 51.95, lon: 4.0, r: 35 },
+  singapore: { lat: 1.25, lon: 103.9, r: 55 },
+  hongkong: { lat: 22.3, lon: 114.1, r: 45 },
+  taiwan: { lat: 24.4, lon: 119.6, r: 160 },
+  tokyobay: { lat: 35.4, lon: 139.8, r: 50 },
+  pugetsound: { lat: 47.8, lon: -122.5, r: 60 },
+  sfbay: { lat: 37.8, lon: -122.4, r: 45 },
+  nyc: { lat: 40.6, lon: -74.0, r: 45 },
+};
+
+// [[minLat, minLon], [maxLat, maxLon]] as aisstream wants it.
+export function regionBox(id: string): [[number, number], [number, number]] {
+  const g = REGIONS[id];
+  if (id === "sandiego") return [[g.lat - 1.25, g.lon - 1.4], [g.lat + 0.75, g.lon + 0.35]]; // ~75 nm, offshore
+  const dLat = g.r / 60, dLon = g.r / (60 * Math.cos((g.lat * Math.PI) / 180));
+  return [[g.lat - dLat, g.lon - dLon], [g.lat + dLat, g.lon + dLon]];
+}
+
+const inBox = (b: [[number, number], [number, number]], lat: number, lon: number) =>
+  lat >= b[0][0] && lat <= b[1][0] && lon >= b[0][1] && lon <= b[1][1];
+
 const COLLECT_MS = 25_000;
 const EVERY_MS = 60_000;
 const ACTIVE_MS = 15 * 60_000; // keep collecting this long after the last request
 const STALE_MS = 30 * 60_000; // drop vessels not heard from for this long
+const MAX_VESSELS = 4000; // storage cap across all regions (busy straits have ~1000 each)
 
 export class Ships extends DurableObject<Env> {
   private vessels = new Map<number, Vessel>();
@@ -34,34 +64,60 @@ export class Ships extends DurableObject<Env> {
     this.loaded = true;
   }
 
-  // Called by the Worker for GET /ships.
-  async list(): Promise<{ vessels: Vessel[]; collecting: boolean }> {
+  // Region id -> unix ms of the tile's last request for it.
+  private async activeRegions(): Promise<Record<string, number>> {
+    return (await this.ctx.storage.get<Record<string, number>>("lastRequests")) ?? {};
+  }
+
+  // Called by the Worker for GET /ships?r=<region>.
+  async list(region: string): Promise<{ vessels: Vessel[]; collecting: boolean }> {
     await this.load();
-    await this.ctx.storage.put("lastRequest", Date.now());
-    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now());
+    const active = await this.activeRegions();
+    const isNew = !active[region] || Date.now() - active[region] > ACTIVE_MS;
+    active[region] = Date.now();
+    await this.ctx.storage.put("lastRequests", active);
+    const alarm = await this.ctx.storage.getAlarm();
+    // A region nobody was watching: collect right away instead of waiting up to a minute.
+    if (alarm === null || (isNew && !this.collecting)) await this.ctx.storage.setAlarm(Date.now());
     const now = Date.now();
-    const vessels = [...this.vessels.values()].filter((v) => now - v.seen < STALE_MS);
+    const box = regionBox(region);
+    const vessels = [...this.vessels.values()].filter((v) => now - v.seen < STALE_MS && inBox(box, v.lat, v.lon));
     return { vessels, collecting: true };
   }
 
+  private collecting = false;
+
   async alarm() {
     await this.load();
-    const last = (await this.ctx.storage.get<number>("lastRequest")) ?? 0;
-    if (Date.now() - last > ACTIVE_MS) return; // nobody is watching: stop until next request
+    const now0 = Date.now();
+    const regions = Object.entries(await this.activeRegions())
+      .filter(([id, t]) => REGIONS[id] && now0 - t < ACTIVE_MS)
+      .map(([id]) => id);
+    if (!regions.length) return; // nobody is watching: stop until next request
+    this.collecting = true;
     try {
-      await this.collect();
+      await this.collect(regions);
     } catch (err) {
       console.error("aisstream collect failed", err);
+    } finally {
+      this.collecting = false;
     }
     const now = Date.now();
     for (const [k, v] of this.vessels) if (now - v.seen > STALE_MS) this.vessels.delete(k);
+    if (this.vessels.size > MAX_VESSELS) {
+      const keep = [...this.vessels.values()].sort((a, b) => b.seen - a.seen).slice(0, MAX_VESSELS);
+      this.vessels = new Map(keep.map((v) => [v.mmsi, v]));
+    }
     await this.ctx.storage.put("vessels", [...this.vessels.values()]);
-    await this.ctx.storage.setAlarm(Date.now() + EVERY_MS);
+    // A region first asked for while we were collecting wasn't in this subscription: go again now.
+    const missed = Object.entries(await this.activeRegions()).some(
+      ([id, t]) => REGIONS[id] && Date.now() - t < ACTIVE_MS && !regions.includes(id),
+    );
+    await this.ctx.storage.setAlarm(Date.now() + (missed ? 0 : EVERY_MS));
   }
 
-  private async collect() {
+  private async collect(regions: string[]) {
     if (!this.env.AISSTREAM_KEY) throw new Error("AISSTREAM_KEY secret not set");
-    const lat = Number(this.env.HOME_LAT), lon = Number(this.env.HOME_LON);
     const resp = await fetch("https://stream.aisstream.io/v0/stream", { headers: { Upgrade: "websocket" } });
     const ws = resp.webSocket;
     if (!ws) throw new Error(`aisstream upgrade failed: HTTP ${resp.status}`);
@@ -70,8 +126,7 @@ export class Ships extends DurableObject<Env> {
     ws.send(
       JSON.stringify({
         APIKey: this.env.AISSTREAM_KEY,
-        // ~75 nm box, mostly offshore of San Diego
-        BoundingBoxes: [[[lat - 1.25, lon - 1.4], [lat + 0.75, lon + 0.35]]],
+        BoundingBoxes: regions.map(regionBox),
         FilterMessageTypes: ["PositionReport", "StandardClassBPositionReport", "ShipStaticData"],
       }),
     );
@@ -99,7 +154,7 @@ export class Ships extends DurableObject<Env> {
       ws.addEventListener("close", (ev) => { console.log(`aisstream closed: ${ev.code} ${ev.reason}`); clearTimeout(timer); resolve(); });
       ws.addEventListener("error", (ev) => { console.log("aisstream error", String((ev as any).message ?? ev)); clearTimeout(timer); resolve(); });
     });
-    console.log(`aisstream: ${count} messages, ${this.vessels.size} vessels`);
+    console.log(`aisstream [${regions.join(",")}]: ${count} messages, ${this.vessels.size} vessels`);
   }
 
   private ingest(msg: any) {

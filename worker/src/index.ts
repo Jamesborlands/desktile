@@ -4,7 +4,7 @@
 //
 //   GET  /route/:callsign        adsbdb origin/destination (cached a day)
 //   GET  /space                  next launches + ISS position and next pass
-//   GET  /ships                  vessels near San Diego (aisstream.io via Durable Object)
+//   GET  /ships?r=<region>       vessels near San Diego or a hotspot (aisstream.io via Durable Object)
 //   GET  /todos                  list; POST /todos {text}; POST /todos/:id/done; DELETE /todos/:id
 //   *    /mcp/<MCP_SECRET>       MCP server (Streamable HTTP) for Claude
 //   GET  /t/<WEB_SECRET>         to-do web app for the phone; its API (and the Siri
@@ -15,7 +15,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import * as sat from "satellite.js";
 import { z } from "zod";
-import { Ships, shipTypeName } from "./ships";
+import { REGIONS, Ships, shipTypeName } from "./ships";
 import { todoPage } from "./webapp";
 
 export { Ships };
@@ -232,15 +232,18 @@ async function space(env: Env, ctx: ExecutionContext) {
 }
 
 // ---------------------------------------------------------------- ships
-async function ships(env: Env) {
+async function ships(env: Env, region: string) {
+  if (!REGIONS[region]) region = "sandiego";
+  // One Durable Object for every region: aisstream gets a single connection.
   const stub = env.SHIPS.get(env.SHIPS.idFromName("sandiego"));
-  const { vessels } = await stub.list();
-  const lat = Number(env.HOME_LAT), lon = Number(env.HOME_LON);
+  const { vessels } = await stub.list(region);
+  const { lat, lon } = REGIONS[region];
   const now = Date.now();
   const rows = vessels
     .map((v) => ({ ...v, dist: distNm(lat, lon, v.lat, v.lon), moving: v.sog >= 0.5 && v.sog < 102.2 }))
     // Moving ships first (nearest first), then moored ones: San Diego Bay alone has
     // more than 80 moored boats, which would otherwise crowd out everything offshore.
+    // Distances are from the region center.
     .sort((a, b) => Number(b.moving) - Number(a.moving) || a.dist - b.dist)
     .slice(0, 80)
     .map((v) => ({
@@ -248,7 +251,7 @@ async function ships(env: Env) {
       lat: Number(v.lat.toFixed(5)), lon: Number(v.lon.toFixed(5)), sog: v.sog >= 102.2 ? 0 : Number(v.sog.toFixed(1)), cog: Math.round(v.cog),
       hdg: v.hdg, len: v.len, dest: v.dest, dist_nm: Number(v.dist.toFixed(1)), age_s: Math.round((now - v.seen) / 1000),
     }));
-  return { t: Math.floor(now / 1000), total: vessels.length, ships: rows };
+  return { t: Math.floor(now / 1000), region, total: vessels.length, ships: rows };
 }
 
 // ---------------------------------------------------------------- to-dos
@@ -402,7 +405,7 @@ export default {
     try {
       if (path.startsWith("/route/")) return tileJson(await route(decodeURIComponent(path.slice(7)), ctx));
       if (path === "/space") return tileJson(await space(env, ctx));
-      if (path === "/ships") return tileJson(await ships(env));
+      if (path === "/ships") return tileJson(await ships(env, url.searchParams.get("r") ?? "sandiego"));
       if (path === "/todos" && request.method === "GET") return tileJson({ todos: await getTodos(env) });
       if (path === "/todos" && request.method === "POST") {
         const body: any = await request.json().catch(() => ({}));
