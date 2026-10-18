@@ -1353,6 +1353,7 @@ static void todo_step(int d) {
 // and further when idle. Backlight levels go to the helper MCU at I2C 0x30: 0 = brightest, 245 = off.
 void sendI2CCommand(uint8_t command);  // main.cpp
 static const uint32_t IDLE_MS = 30000;
+static const uint32_t HOTSPOT_MS = 3 * 60000;  // a hotspot reverts to San Diego after this long untouched
 static const int NIGHT_FROM = 22, NIGHT_TO = 7;  // local hours
 
 static bool is_night() {
@@ -1739,7 +1740,6 @@ static void set_hotspot(int i) {
   if (map_mode()) g_range = g_mode_range[sel_slot()];
   g_filter = (Filter)h.filter;
   g_sel[0][0] = g_sel[1][0] = 0;
-  g_prefs.putUChar("hs", i);
   Serial.printf("[ui] hotspot %s\n", h.id);
   refresh_all();
 }
@@ -2024,8 +2024,6 @@ void app_init() {
   if (g_favs.length() == 0 || g_favs[0] != ',') g_favs = "," + g_favs;
   build_ui();
   knobs_init();
-  int hs = g_prefs.getUChar("hs", 0);  // last hotspot survives the nightly restart
-  if (hs > 0 && hs < HOTSPOT_COUNT) set_hotspot(hs);
   refresh_all();
   xTaskCreatePinnedToCore(net_task, "net", 16384, nullptr, 1, nullptr, 0);
 }
@@ -2055,6 +2053,7 @@ void app_loop() {
     g_pan_e = g_pan_n = 0;
     g_view_dirty = true;
   }
+  if (g_hs != 0 && millis() - g_last_touch > HOTSPOT_MS) set_hotspot(0);  // away for 3 min: home to San Diego
   if (!g_idle && g_ota_pct == -1 && millis() - g_last_touch > IDLE_MS) go_idle();
   static uint32_t last_idle_tick = 0;
   if (millis() - last_idle_tick >= 1000) {  // once a second: idle view (countdowns, clock) + backlight schedule
