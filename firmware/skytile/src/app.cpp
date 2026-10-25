@@ -590,7 +590,6 @@ static lv_obj_t *c_type;
 static lv_obj_t *c_eye, *c_call, *c_desc, *c_tag, *c_route, *c_cities, *c_reg, *c_favbtn, *c_favbtn_lbl;
 static lv_obj_t *c_k[4], *c_v[4];  // 2x2 stat grid: key / value labels
 static lv_obj_t *c_prevbtn, *c_nextbtn;          // touch stand-ins for the bottom knob
-static lv_obj_t *knob_banner, *knob_banner_lbl;  // first-time knob address setup
 // widgets: space
 static lv_obj_t *scr_space;
 static lv_obj_t *sp_rocket, *sp_mission, *sp_where, *sp_count, *sp_when, *sp_vis, *sp_row[4];
@@ -1610,39 +1609,14 @@ static void build_idle() {
   lv_obj_add_flag(idle_ov, LV_OBJ_FLAG_HIDDEN);
 }
 
-// ---------------------------------------------------------------- knob setup + button visibility
-// Both knobs ship at I2C 0x36. With exactly one knob connected, a banner offers to make
-// it the TOP knob (0x37). Two taps (start, confirm) so a stray touch can't do it, and
-// the confirm text reminds you that only the top knob should be plugged in.
-static int g_banner_step = 0;  // 0 offer, 1 waiting for confirm, 2 result shown
-static uint32_t g_banner_at = 0;
-
-static void on_knob_banner(lv_event_t *) {
-  if (g_banner_step == 0) {
-    g_banner_step = 1;
-    g_banner_at = millis();
-    set_text(knob_banner_lbl, "Only the TOP knob plugged in? Tap to confirm");
-  } else if (g_banner_step == 1) {
-    bool ok = knobs_set_top();
-    g_banner_step = 2;
-    g_banner_at = millis();
-    set_text(knob_banner_lbl, ok ? "Top knob set. Now plug in the bottom knob" : "Setup failed. Unplug, replug, try again");
-  }
-}
-
+// ---------------------------------------------------------------- knob button visibility
+// The on-screen prev/next/favorite buttons stand in for the knobs until both are connected.
 static void update_knob_ui() {
   int st = knobs_state();
   bool both = st == (KNOB_BOTTOM | KNOB_TOP);
   show(c_prevbtn, !both);
   show(c_nextbtn, !both);
   if (g_mode == M_PLANES) show(c_favbtn, !both);
-  bool offer = st == KNOB_BOTTOM;  // one knob, still at the factory address
-  if (g_banner_step == 1 && millis() - g_banner_at > 15000) g_banner_step = 0;  // confirm timed out
-  if (g_banner_step == 2 && millis() - g_banner_at > 10000) g_banner_step = 0;
-  if (g_banner_step == 0) set_text(knob_banner_lbl, "Knob found. Tap to set it up as the TOP knob");
-  bool vis = (offer || g_banner_step == 2) && !g_idle;
-  show(knob_banner, vis);
-  if (vis) show(fchip, false);
 }
 
 // ---------------------------------------------------------------- top bar + screen switching
@@ -2035,15 +2009,6 @@ static void build_ui() {
   lv_obj_set_style_radius(chip_dot, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_opa(chip_dot, LV_OPA_COVER, 0);
   chip_status_lbl = mk_label(bar, "WIFI...", &lv_font_montserrat_12, C_MUTED, 718, 14);
-  knob_banner = mk_box(bar, 410, 6, 380, 32);
-  lv_obj_set_style_bg_opa(knob_banner, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(knob_banner, lv_color_hex(0x1c2b47), 0);
-  lv_obj_set_style_radius(knob_banner, 6, 0);
-  lv_obj_add_flag(knob_banner, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(knob_banner, on_knob_banner, LV_EVENT_CLICKED, nullptr);
-  knob_banner_lbl = mk_label(knob_banner, "", &lv_font_montserrat_12, C_TEXT, 0, 0);
-  lv_obj_center(knob_banner_lbl);
-  lv_obj_add_flag(knob_banner, LV_OBJ_FLAG_HIDDEN);
 
   build_map_screen(scr);
   build_space_screen(scr);

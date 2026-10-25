@@ -2,7 +2,8 @@
 // panel's I2C port (same bus as touch/backlight: SDA 15, SCL 16).
 //   0x37 = TOP knob (Mode): turn = switch mode, press = cycle filter
 //   0x36 = BOTTOM knob (Select): turn = move selection, press = act, hold = favorite
-// Both ship at 0x36; knobs_set_top() moves a lone knob to 0x37 (stored in its EEPROM).
+// Both ship at 0x36. The top knob has solder jumper A0 bridged (0x37); software address
+// changes don't stick on these boards, so there is no setup step.
 // Polled from the main loop, the same task that reads touch, so the bus is never shared
 // between tasks.
 #include "knobs.h"
@@ -40,24 +41,24 @@ static bool probe(Knob &k) {
   return true;
 }
 
+// The top knob has an address jumper bridged (A0 = 0x37, A1 = 0x38, ...): accept any of them.
+static bool probe_top() {
+  for (uint8_t a = ADDR_TOP; a <= 0x3D; a++) {
+    k_top.addr = a;
+    if (probe(k_top)) return true;
+  }
+  k_top.addr = ADDR_TOP;
+  return false;
+}
+
 void knobs_init() {
   k_bottom.addr = ADDR_BOTTOM;
   k_top.addr = ADDR_TOP;
   k_bottom.present = probe(k_bottom);
-  k_top.present = probe(k_top);
+  k_top.present = probe_top();
 }
 
 int knobs_state() { return (k_bottom.present ? KNOB_BOTTOM : 0) | (k_top.present ? KNOB_TOP : 0); }
-
-bool knobs_set_top() {
-  if (!k_bottom.present || k_top.present) return false;
-  Serial.println("[knob] moving 0x36 -> 0x37");
-  k_bottom.ss.setI2CAddr(ADDR_TOP);  // writes the address to the knob's EEPROM, then restarts it
-  delay(300);
-  k_bottom.present = false;
-  k_top.present = probe(k_top);
-  return k_top.present;
-}
 
 // One knob: turns become steps, presses become press/hold events.
 static void poll_one(Knob &k, InputEvt next, InputEvt prev, InputEvt press, InputEvt hold) {
@@ -81,7 +82,7 @@ void knobs_poll() {
   if (now - last_scan >= RESCAN_MS) {  // pick up knobs plugged in while running
     last_scan = now;
     if (!k_bottom.present) k_bottom.present = probe(k_bottom);
-    if (!k_top.present) k_top.present = probe(k_top);
+    if (!k_top.present) k_top.present = probe_top();
   }
   if (now - last_poll < POLL_MS) return;
   last_poll = now;
