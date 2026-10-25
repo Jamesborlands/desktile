@@ -57,8 +57,8 @@ Setup is in [docs/todos.md](docs/todos.md).
 
 The map cycles through busy waterways and ports: San Diego, Strait of Hormuz, Persian Gulf,
 Dover Strait, Rotterdam, Singapore Strait, Hong Kong, Taiwan Strait, Tokyo Bay, Puget Sound,
-SF Bay and New York Harbor, each with its own airports. Tap the place name (or hold the top
-knob) for the next one. Tap HOME, or hold the top knob for 2 seconds, to jump back. After 3 minutes untouched it goes home
+SF Bay and New York Harbor, each with its own airports. Tap the place name (or press the top
+knob) for the next one. Tap HOME, or hold the top knob, to jump back. After 3 minutes untouched it goes home
 by itself.
 
 ## Knobs
@@ -67,10 +67,11 @@ Two Adafruit I2C rotary encoders sit to the right of the screen.
 
 | | Turn | Press | Hold |
 |---|---|---|---|
-| **Top knob** | Switch mode | Change filter (All, Military, Interesting, Favorites) | Next hotspot. Hold 2 s: home |
+| **Top knob** | Switch mode | Next location | Home (San Diego) |
 | **Bottom knob** | Move through planes, ships, launches or to-dos | Open details, or check off a to-do | Add or remove a favorite |
 
 Touch works everywhere too: tap to select, pinch or use the buttons to zoom, drag to pan.
+The planes filter (All, Military, Interesting, Favorites) is the chip in the top bar.
 
 ## How it works
 

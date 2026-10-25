@@ -259,7 +259,7 @@ void loop()
     int c = Serial.read();
     if (c == 'S') send_screenshot();
     else if (c >= '0' && c <= '3') app_sleep_on(c - '0');
-    else if (c == 'H') app_input(IN_MODE_HOLD);  // next hotspot (same as holding the top knob)
+    else if (c == 'H') app_input(IN_MODE_PRESS);  // next hotspot (same as pressing the top knob)
     else if (c == 'N') app_input(IN_MODE_NEXT);  // next mode (top knob turn)
     else if (c == 'D') app_demo_todos();  // made-up to-dos for screenshots
   }

@@ -45,7 +45,7 @@ static volatile float g_pan_e = 0, g_pan_n = 0;  // view center offset from the 
 
 // Hotspot = where the map is centered: 0 is home (San Diego), the rest are busy
 // straits and ports around the world (hotspots.h). Tap the map's place button or
-// hold the top knob to cycle.
+// press the top knob to cycle; hold it (or tap HOME) to go home.
 static volatile int g_hs = 0;
 static volatile float g_clat = HOME_LAT, g_clon = HOME_LON;  // map center (hotspot)
 static volatile float g_klon = 60.0f * 0.8389f;              // nm per degree of longitude there
@@ -1902,14 +1902,11 @@ void app_input(InputEvt e) {
   switch (e) {
     case IN_MODE_NEXT: set_mode((Mode)((g_mode + 1) % 4)); break;
     case IN_MODE_PREV: set_mode((Mode)((g_mode + 3) % 4)); break;
-    case IN_MODE_PRESS:
-      if (g_mode == M_PLANES) { g_filter = (Filter)((g_filter + 1) % 4); refresh_all(); }
-      break;
-    case IN_MODE_HOLD:  // next hotspot (jumps to the map if you're on Space or To-do)
+    case IN_MODE_PRESS:  // next hotspot (jumps to the map if you're on Space or To-do); the filter is on the top-bar chip
       if (!map_mode()) set_mode(M_PLANES);
       set_hotspot(g_hs + 1);
       break;
-    case IN_MODE_LONG:  // home to San Diego
+    case IN_MODE_HOLD:  // home to San Diego
       if (!map_mode()) set_mode(M_PLANES);
       set_hotspot(0);
       break;

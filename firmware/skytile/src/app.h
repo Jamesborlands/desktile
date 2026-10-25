@@ -4,9 +4,8 @@
 enum InputEvt {
   IN_MODE_NEXT,   // top knob turn right
   IN_MODE_PREV,   // top knob turn left
-  IN_MODE_PRESS,  // top knob press: cycle All / Military / Interesting / Favorites
-  IN_MODE_HOLD,   // top knob hold: next hotspot (San Diego, Hormuz, Dover...)
-  IN_MODE_LONG,   // top knob hold 2 s: home to San Diego
+  IN_MODE_PRESS,  // top knob press: next hotspot (San Diego, Hormuz, Dover...)
+  IN_MODE_HOLD,   // top knob hold: home to San Diego
   IN_SEL_NEXT,    // bottom knob turn right
   IN_SEL_PREV,    // bottom knob turn left
   IN_SEL_PRESS,   // bottom knob press: open details
