@@ -13,17 +13,27 @@
     "HOME_LON": "-117.25"
   },
 
-  // To-do list. The id is filled in automatically on first deploy.
+  // KV: last good copies of upstream feeds, plus the old to-do list (kept as a backup
+  // after the move to TodoStore). The id is filled in automatically on first deploy.
   "kv_namespaces": [{ "binding": "TODOS" }],
 
   // Ships: one Durable Object holds the aisstream.io collector and vessel cache.
+  // TodoStore: one Durable Object (SQLite) holds the to-do list for every client.
   "durable_objects": {
-    "bindings": [{ "name": "SHIPS", "class_name": "Ships" }]
+    "bindings": [
+      { "name": "SHIPS", "class_name": "Ships" },
+      { "name": "TODO_STORE", "class_name": "TodoStore" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Ships"] }]
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Ships"] },
+    { "tag": "v2", "new_sqlite_classes": ["TodoStore"] }
+  ]
 
   // Secrets (set with `npx wrangler secret put NAME`, never in this file):
   //   TILE_KEY       device key the tile sends in the X-Tile-Key header
   //   MCP_SECRET     random path segment: the connector URL is /mcp/<MCP_SECRET>
   //   AISSTREAM_KEY  aisstream.io API key
+  //   WEB_SECRET     path segment for the phone web app /t/<WEB_SECRET>
+  //   API_TOKEN      Bearer token for /api/v1/todos (Mac menu bar, iPhone app/widget)
 }

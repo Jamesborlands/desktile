@@ -3,4 +3,5 @@ interface Env {
   MCP_SECRET: string;
   WEB_SECRET?: string;
   AISSTREAM_KEY?: string;
+  API_TOKEN?: string;
 }

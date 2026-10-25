@@ -328,9 +328,17 @@ static void parse_space(const String &body) {
   Serial.printf("[net] space: %d launches\n", s.n);
 }
 
+// Hash of the last /todos body: the tile polls every 5 s on the To-do screen, but only
+// redraws when the list changed. Reset to 0 after a check-off to always re-apply.
+static uint32_t g_td_hash = 0;
+
 static void parse_todos(const String &body) {
+  uint32_t h = 2166136261u;  // FNV-1a
+  for (size_t i = 0; i < body.length(); i++) h = (h ^ (uint8_t)body[i]) * 16777619u;
+  if (h == g_td_hash) return;
   JsonDocument doc(&g_psram_alloc);
   if (deserializeJson(doc, body)) return;
+  g_td_hash = h;
   static Todo *tmp = (Todo *)heap_caps_malloc(sizeof(Todo) * MAXT, MALLOC_CAP_SPIRAM);
   int n = 0;
   for (JsonObject t : doc["todos"].as<JsonArray>()) {
@@ -539,9 +547,10 @@ static void net_task(void *) {
       int code;
       if (!http_req("POST", url, true, body, code)) Serial.printf("[net] todo toggle HTTP %d\n", code);
     }
-    if (qn) t_td = 0;
-    // To-dos: every 15 s on the To-do screen, every minute otherwise.
-    if (!t_td || now - t_td >= (m == M_TODO ? 15000 : 60000)) { t_td = millis(); worker_get("/todos", parse_todos); }
+    if (qn) { t_td = 0; g_td_hash = 0; }
+    // To-dos: every 5 s on the To-do screen (changes from the phone, Mac or Claude show
+    // up fast), every minute otherwise.
+    if (!t_td || now - t_td >= (m == M_TODO ? 5000 : 60000)) { t_td = millis(); worker_get("/todos", parse_todos); }
 
     char req[10];
     xSemaphoreTake(g_mtx, portMAX_DELAY);
@@ -592,7 +601,7 @@ static lv_obj_t *scr_todo, *todo_list, *todo_head, *todo_empty;
 static lv_obj_t *ota_overlay, *ota_lbl, *ota_bar;
 static lv_obj_t *idle_ov, *idle_tag, *tag_eye, *tag_name, *tag_line;
 static const int DASH_TD = 7;  // to-dos shown on the idle dashboard
-static lv_obj_t *dash_time, *dash_date, *dash_td[DASH_TD], *dash_l_count, *dash_l_name, *dash_l_vis;
+static lv_obj_t *dash_time, *dash_date, *dash_td[DASH_TD], *dash_td_dot[DASH_TD], *dash_td_more, *dash_l_count, *dash_l_name, *dash_l_vis, *dash_td_sec, *dash_l_sec;
 static bool g_idle = false;
 
 static void set_text(lv_obj_t *l, const char *t) {
@@ -1286,9 +1295,12 @@ static void refresh_todo() {
   if (g_todo_sel >= g_td_n) g_todo_sel = g_td_n ? g_td_n - 1 : -1;
   lv_obj_clean(todo_list);
   for (int i = 0; i < g_td_n; i++) {
+    // long items wrap onto more lines: the row grows to fit
+    lv_point_t sz;
+    lv_text_get_size(&sz, g_td[i].text, &lv_font_montserrat_24, 0, 0, 670, LV_TEXT_FLAG_NONE);
     lv_obj_t *row = lv_obj_create(todo_list);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, 740, 54);
+    lv_obj_set_size(row, 740, LV_MAX(54, sz.y + 26));
     lv_obj_set_style_radius(row, 8, 0);
     lv_obj_set_style_bg_color(row, lv_color_hex(0x1c2b47), 0);
     lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
@@ -1308,7 +1320,7 @@ static void refresh_todo() {
     }
     lv_obj_t *t = mk_label(row, g_td[i].text, &lv_font_montserrat_24, g_td[i].done ? C_DIM : C_TEXT, 54, 13);
     lv_obj_set_width(t, 670);
-    lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
+    lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
     if (g_td[i].done) lv_obj_set_style_text_decor(t, LV_TEXT_DECOR_STRIKETHROUGH, 0);
   }
   set_text(todo_empty, g_td_loaded ? "Nothing to do. Ask Claude to add something." : "Loading...");
@@ -1442,31 +1454,63 @@ static void refresh_idle() {
     set_text(dash_time, "--:--");
     set_text(dash_date, "");
   }
-  // to-dos: count + first open items
-  int left = 0;
-  for (int i = 0; i < g_td_n; i++) left += !g_td[i].done;
-  int shown = 0;
-  for (int i = 0; i < g_td_n && shown < DASH_TD; i++) {
-    if (g_td[i].done) continue;
-    set_text(dash_td[shown++], g_td[i].text);
-  }
-  if (!left) set_text(dash_td[shown++], g_td_loaded ? "All done" : "...");
-  while (shown < DASH_TD) set_text(dash_td[shown++], "");
-  // next launch
+  // next launch (decides how much room the to-dos get)
   long now = time(nullptr);
   int first = 0;
   while (first < g_sp.n && clock_ok() && (long)g_sp.l[first].t < now - 3600) first++;
-  if (first < g_sp.n && clock_ok()) {
+  bool has_launch = first < g_sp.n && clock_ok();
+  // to-dos: open items, each wrapped onto as many lines as it needs, stacked until the
+  // section is full (the launch section starts at 334, else the screen bottom)
+  int left = 0;
+  for (int i = 0; i < g_td_n; i++) left += !g_td[i].done;
+  const int TD_TOP = 38, TD_BOTTOM = has_launch ? 226 : 366, TD_GAP = 8, MORE_H = 20;
+  static int td_y[DASH_TD], td_vis = -1;
+  int y = TD_TOP, shown = 0, seen = 0;
+  for (int i = 0; i < g_td_n && shown < DASH_TD; i++) {
+    if (g_td[i].done) continue;
+    seen++;
+    lv_point_t sz;
+    lv_text_get_size(&sz, g_td[i].text, &lv_font_montserrat_16, 0, 0, 224, LV_TEXT_FLAG_NONE);
+    bool last = seen == left;
+    if (y + sz.y > TD_BOTTOM - (last ? 0 : MORE_H)) { seen--; break; }
+    set_text(dash_td[shown], g_td[i].text);
+    if (td_y[shown] != y) {  // move only on change: moving redraws
+      td_y[shown] = y;
+      lv_obj_set_y(dash_td[shown], y);
+      lv_obj_set_y(dash_td_dot[shown], y + 7);
+    }
+    y += sz.y + TD_GAP;
+    shown++;
+  }
+  if (left - seen > 0) {
+    char more[24];
+    snprintf(more, sizeof more, "+%d more", left - seen);
+    set_text(dash_td_more, more);
+    static int more_y = -1;
+    if (more_y != y) { more_y = y; lv_obj_set_y(dash_td_more, y); }
+  } else set_text(dash_td_more, "");
+  if (td_vis != shown) {  // bullets for the filled lines
+    td_vis = shown;
+    for (int i = 0; i < DASH_TD; i++) show(dash_td_dot[i], i < shown);
+  }
+  for (int i = shown; i < DASH_TD; i++) set_text(dash_td[i], "");
+  if (has_launch) {
     const Launch &l = g_sp.l[first];
     fmt_countdown(b, sizeof b, (long)l.t - now);
     set_text(dash_l_count, b);
     snprintf(b, sizeof b, "%s, %s", l.rocket, l.name);
     set_text(dash_l_name, b);
     set_text(dash_l_vis, l.visible ? "Visible from home, look NW" : l.loc);
-  } else {
-    set_text(dash_l_count, "--");
-    set_text(dash_l_name, "");
-    set_text(dash_l_vis, "");
+  }
+  // Sections with nothing to show are hidden; the launch moves up when there are no to-dos.
+  // Only touch the layout when it changes: hiding or moving redraws the column.
+  static int layout = -1;
+  int lay = (left > 0) | (has_launch << 1);
+  if (lay != layout) {
+    layout = lay;
+    show(dash_td_sec, left > 0);
+    show(dash_l_sec, has_launch);
+    lv_obj_set_y(dash_l_sec, left > 0 ? 334 : 104);
   }
 }
 
@@ -1539,14 +1583,29 @@ static void build_idle() {
   lv_obj_remove_flag(col, LV_OBJ_FLAG_CLICKABLE);
   dash_time = mk_label(col, "", &lv_font_montserrat_48, C_TEXT, 20, 18);
   dash_date = mk_label(col, "", &lv_font_montserrat_16, C_MUTED, 22, 74);
-  dash_rule(col, 104);
-  dash_eye(col, "TO-DO", C_TODO, 118);
-  for (int i = 0; i < DASH_TD; i++) dash_td[i] = mk_dot_label(col, &lv_font_montserrat_16, C_TEXT, 20, 142 + i * 26, 240);
-  dash_rule(col, 334);
-  dash_eye(col, "NEXT LAUNCH", C_SPACE, 348);
-  dash_l_count = mk_label(col, "", &lv_font_montserrat_24, C_SPACE, 20, 366);
-  dash_l_name = mk_dot_label(col, &lv_font_montserrat_12, C_MUTED, 20, 398, 240);
-  dash_l_vis = mk_dot_label(col, &lv_font_montserrat_12, C_SPACE, 20, 416, 240);
+  // sections: hidden by refresh_idle() when empty
+  dash_td_sec = mk_box(col, 0, 104, 280, 376);  // to the screen bottom; items stop above the launch section when it shows
+  dash_rule(dash_td_sec, 0);
+  dash_eye(dash_td_sec, "TO-DO", C_TODO, 14);
+  for (int i = 0; i < DASH_TD; i++) {
+    dash_td_dot[i] = mk_box(dash_td_sec, 22, 38 + i * 26 + 7, 6, 6);  // bullet, centered on the 16 px text
+    lv_obj_set_style_radius(dash_td_dot[i], LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(dash_td_dot[i], LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(dash_td_dot[i], lv_color_hex(C_TODO), 0);
+    lv_obj_remove_flag(dash_td_dot[i], LV_OBJ_FLAG_CLICKABLE);
+    dash_td[i] = mk_label(dash_td_sec, "", &lv_font_montserrat_16, C_TEXT, 36, 38 + i * 26);
+    lv_obj_set_width(dash_td[i], 224);
+    lv_label_set_long_mode(dash_td[i], LV_LABEL_LONG_WRAP);
+  }
+  dash_td_more = mk_label(dash_td_sec, "", &lv_font_montserrat_12, C_MUTED, 36, 0);
+  dash_l_sec = mk_box(col, 0, 334, 280, 110);
+  dash_rule(dash_l_sec, 0);
+  dash_eye(dash_l_sec, "NEXT LAUNCH", C_SPACE, 14);
+  dash_l_count = mk_label(dash_l_sec, "", &lv_font_montserrat_24, C_SPACE, 20, 32);
+  dash_l_name = mk_dot_label(dash_l_sec, &lv_font_montserrat_12, C_MUTED, 20, 64, 240);
+  dash_l_vis = mk_dot_label(dash_l_sec, &lv_font_montserrat_12, C_SPACE, 20, 82, 240);
+  lv_obj_remove_flag(dash_td_sec, LV_OBJ_FLAG_CLICKABLE);  // taps fall through to idle_ov (wake)
+  lv_obj_remove_flag(dash_l_sec, LV_OBJ_FLAG_CLICKABLE);
 
   lv_obj_add_flag(idle_ov, LV_OBJ_FLAG_HIDDEN);
 }

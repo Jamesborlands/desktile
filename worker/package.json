@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "types": "wrangler types"
+    "types": "wrangler types",
+    "test": "vitest run",
+    "typecheck": "tsc -p . && tsc -p test"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
@@ -14,6 +16,9 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.7",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12",
     "wrangler": "^4.149.0"
   }
 }

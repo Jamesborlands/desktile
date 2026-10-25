@@ -9,16 +9,19 @@
 //   *    /mcp/<MCP_SECRET>       MCP server (Streamable HTTP) for Claude
 //   GET  /t/<WEB_SECRET>         to-do web app for the phone; its API (and the Siri
 //                                Shortcut) lives under /t/<WEB_SECRET>/api/todos
+//   *    /api/v1/todos           client API (Mac menu bar, iPhone app + widget), header
+//                                Authorization: Bearer <API_TOKEN>
 //
-// Everything except /mcp needs the X-Tile-Key header (secret TILE_KEY).
+// Everything else needs the X-Tile-Key header (secret TILE_KEY).
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import * as sat from "satellite.js";
 import { z } from "zod";
 import { REGIONS, Ships, shipTypeName } from "./ships";
+import { MAX_TEXT, Todo, TodoStore } from "./todos";
 import { todoPage } from "./webapp";
 
-export { Ships };
+export { Ships, TodoStore };
 
 const UA = "SkyTile/0.1 (DIY desk display)"; // adsb.lol rejects generic agents
 
@@ -255,42 +258,8 @@ async function ships(env: Env, region: string) {
 }
 
 // ---------------------------------------------------------------- to-dos
-type Todo = { id: string; text: string; done: boolean; created: number; doneAt?: number };
-
-// Checked-off items disappear 24 hours after they were checked off.
-const DONE_TTL_MS = 24 * 60 * 60 * 1000;
-
-function setDone(t: Todo, done: boolean) {
-  t.done = done;
-  if (done) t.doneAt = Date.now();
-  else delete t.doneAt;
-}
-
-async function getTodos(env: Env): Promise<Todo[]> {
-  const todos = (await env.TODOS.get<Todo[]>("todos", "json")) ?? [];
-  const now = Date.now();
-  let changed = false;
-  for (const t of todos)
-    if (t.done && !t.doneAt) { t.doneAt = now; changed = true; }  // checked off before timestamps existed
-  const kept = todos.filter((t) => !(t.done && now - (t.doneAt ?? now) > DONE_TTL_MS));
-  if (changed || kept.length !== todos.length) await putTodos(env, kept);
-  return kept;
-}
-async function putTodos(env: Env, todos: Todo[]) {
-  await env.TODOS.put("todos", JSON.stringify(todos));
-}
-async function addTodo(env: Env, text: string) {
-  const todos = await getTodos(env);
-  const t: Todo = { id: crypto.randomUUID().slice(0, 8), text: text.trim().slice(0, 120), done: false, created: Date.now() };
-  todos.push(t);
-  await putTodos(env, todos);
-  return t;
-}
-// Find by id, or by case-insensitive text match (exact first, then substring).
-function findTodo(todos: Todo[], ref: string) {
-  const r = ref.trim().toLowerCase();
-  return todos.find((t) => t.id === ref) ?? todos.find((t) => t.text.toLowerCase() === r) ?? todos.find((t) => t.text.toLowerCase().includes(r));
-}
+// Stored in the TodoStore Durable Object (src/todos.ts); one instance holds the list.
+const todoStore = (env: Env) => env.TODO_STORE.get(env.TODO_STORE.idFromName("main"));
 
 const todoLine = (t: Todo) => `${t.done ? "[x]" : "[ ]"} ${t.text} (id ${t.id})`;
 
@@ -304,7 +273,7 @@ function mcpServer(env: Env) {
       "list_todos",
       { description: "List the to-do items shown on James's SkyTile desk display. Checked-off items disappear 24 hours after being checked off." },
       async () => {
-        const todos = await getTodos(env);
+        const todos = await todoStore(env).list();
         return text(todos.length ? todos.map(todoLine).join("\n") : "The to-do list is empty.");
       },
     );
@@ -312,7 +281,7 @@ function mcpServer(env: Env) {
       "add_todo",
       { description: "Add a to-do item to the SkyTile desk display. Keep it short; it is shown on a small screen.", inputSchema: { text: z.string().min(1).max(120) } },
       async ({ text: item }) => {
-        const t = await addTodo(env, item);
+        const t = await todoStore(env).add(item, "mcp");
         return text(`Added: ${t.text} (id ${t.id})`);
       },
     );
@@ -320,22 +289,26 @@ function mcpServer(env: Env) {
       "complete_todo",
       { description: "Mark a to-do item done (or not done). Identify it by id or by its text.", inputSchema: { item: z.string(), done: z.boolean().optional() } },
       async ({ item, done }) => {
-        const todos = await getTodos(env);
-        const t = findTodo(todos, item);
+        const t = await todoStore(env).completeMatch(item, done ?? true);
         if (!t) return text(`No to-do matches "${item}".`);
-        setDone(t, done ?? true);
-        await putTodos(env, todos);
         return text(`${t.done ? "Done" : "Reopened"}: ${t.text}`);
+      },
+    );
+    server.registerTool(
+      "edit_todo",
+      { description: "Change the text of a to-do item. Identify it by id or by its current text.", inputSchema: { item: z.string(), text: z.string().min(1).max(120) } },
+      async ({ item, text: newText }) => {
+        const t = await todoStore(env).editMatch(item, newText);
+        if (!t) return text(`No to-do matches "${item}".`);
+        return text(`Edited: ${t.text} (id ${t.id})`);
       },
     );
     server.registerTool(
       "remove_todo",
       { description: "Delete a to-do item. Identify it by id or by its text.", inputSchema: { item: z.string() } },
       async ({ item }) => {
-        const todos = await getTodos(env);
-        const t = findTodo(todos, item);
+        const t = await todoStore(env).removeMatch(item);
         if (!t) return text(`No to-do matches "${item}".`);
-        await putTodos(env, todos.filter((x) => x !== t));
         return text(`Removed: ${t.text}`);
       },
     );
@@ -343,14 +316,94 @@ function mcpServer(env: Env) {
       "clear_completed",
       { description: "Delete all to-do items that are marked done." },
       async () => {
-        const todos = await getTodos(env);
-        const left = todos.filter((t) => !t.done);
-        await putTodos(env, left);
-        return text(`Cleared ${todos.length - left.length} completed item(s).`);
+        const n = await todoStore(env).clearCompleted();
+        return text(`Cleared ${n} completed item(s).`);
       },
     );
     return server;
   };
+}
+
+// ---------------------------------------------------------------- to-do HTTP APIs
+// Constant-time compare for the API token.
+function safeEqual(a: string, b: string) {
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+  if (x.length !== y.length) return false;
+  let d = 0;
+  for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i];
+  return d === 0;
+}
+
+// Body text: JSON {"text": "..."} or plain text (Siri Shortcut).
+async function bodyFields(request: Request): Promise<{ text: string; source?: string }> {
+  const raw = await request.text();
+  try {
+    const b = JSON.parse(raw);
+    if (b && typeof b === "object") return { text: String(b.text ?? "").trim(), source: typeof b.source === "string" ? b.source : undefined };
+  } catch {}
+  return { text: raw.trim() };
+}
+
+// The tile's /todos and the web app's /t/<WEB_SECRET>/api/todos (unchanged contract):
+//   GET "" list, POST "" add, POST /clear, POST /:id/done toggle, DELETE /:id
+async function legacyTodos(request: Request, env: Env, sub: string, source: string, out: (d: unknown, s?: number) => Response) {
+  const store = todoStore(env);
+  if (sub === "" && request.method === "GET") return out({ todos: await store.list() });
+  if (sub === "" && request.method === "POST") {
+    const { text } = await bodyFields(request);
+    if (!text) return json({ error: "text required" }, 400);
+    return json(await store.add(text, source), 201);
+  }
+  if (sub === "/clear" && request.method === "POST") {
+    await store.clearCompleted();
+    return json({ ok: true });
+  }
+  const m = sub.match(/^\/([^/]+)(\/done)?$/);
+  if (m && m[2] && request.method === "POST") {
+    const t = await store.setDone(m[1]);
+    return t ? json(t) : json({ error: "not found" }, 404);
+  }
+  if (m && !m[2] && request.method === "DELETE") return (await store.remove(m[1])) ? json({ ok: true }) : json({ error: "not found" }, 404);
+  return json({ error: "not found" }, 404);
+}
+
+// /api/v1/todos (Bearer API_TOKEN):
+//   GET    /api/v1/todos                      {todos: [...]}, open items first, then by position
+//   POST   /api/v1/todos {text, source?}      201 {todo}
+//   POST   /api/v1/todos/:id/complete         {todo}
+//   POST   /api/v1/todos/:id/uncomplete       {todo}
+//   PATCH  /api/v1/todos/:id {text}           {todo}
+//   DELETE /api/v1/todos/:id                  {ok: true}
+//   POST   /api/v1/todos/clear-completed      {cleared: n}
+const SOURCES = new Set(["mac", "ios", "widget", "siri", "web", "api"]);
+async function apiV1(request: Request, env: Env, sub: string) {
+  const store = todoStore(env);
+  const method = request.method;
+  if (sub === "" && method === "GET") {
+    const todos = await store.list();
+    return json({ todos: [...todos.filter((t) => !t.done), ...todos.filter((t) => t.done)] });
+  }
+  if (sub === "" && method === "POST") {
+    const { text, source } = await bodyFields(request);
+    if (!text) return json({ error: "text required" }, 400);
+    if (text.length > MAX_TEXT) return json({ error: `text longer than ${MAX_TEXT} characters` }, 400);
+    return json({ todo: await store.add(text, source && SOURCES.has(source) ? source : "api") }, 201);
+  }
+  if (sub === "/clear-completed" && method === "POST") return json({ cleared: await store.clearCompleted() });
+  const m = sub.match(/^\/([0-9a-z]{1,16})(?:\/(complete|uncomplete))?$/);
+  if (m && m[2] && method === "POST") {
+    const t = await store.setDone(m[1], m[2] === "complete");
+    return t ? json({ todo: t }) : json({ error: "not found" }, 404);
+  }
+  if (m && !m[2] && method === "PATCH") {
+    const { text } = await bodyFields(request);
+    if (!text) return json({ error: "text required" }, 400);
+    if (text.length > MAX_TEXT) return json({ error: `text longer than ${MAX_TEXT} characters` }, 400);
+    const t = await store.edit(m[1], text);
+    return t ? json({ todo: t }) : json({ error: "not found" }, 404);
+  }
+  if (m && !m[2] && method === "DELETE") return (await store.remove(m[1])) ? json({ ok: true }) : json({ error: "not found" }, 404);
+  return json({ error: "not found" }, 404);
 }
 
 // ---------------------------------------------------------------- router
@@ -374,30 +427,14 @@ export default {
       if (path === base || path === base + "/")
         return new Response(todoPage(), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" } });
       if (!path.startsWith(base + "/api/todos")) return new Response("Not found", { status: 404 });
-      const sub = path.slice((base + "/api/todos").length);
-      if (sub === "" && request.method === "GET") return json({ todos: await getTodos(env) });
-      if (sub === "" && request.method === "POST") {
-        // JSON {"text": "..."} from the web app, or plain text from a Shortcut
-        const raw = await request.text();
-        let text = raw;
-        try { text = String(JSON.parse(raw).text ?? ""); } catch {}
-        text = text.trim();
-        if (!text) return json({ error: "text required" }, 400);
-        return json(await addTodo(env, text), 201);
-      }
-      if (sub === "/clear" && request.method === "POST") {
-        await putTodos(env, (await getTodos(env)).filter((t) => !t.done));
-        return json({ ok: true });
-      }
-      const m = sub.match(/^\/([^/]+)(\/done)?$/);
-      if (m) {
-        const todos = await getTodos(env);
-        const t = todos.find((x) => x.id === m[1]);
-        if (!t) return json({ error: "not found" }, 404);
-        if (m[2] && request.method === "POST") { setDone(t, !t.done); await putTodos(env, todos); return json(t); }
-        if (!m[2] && request.method === "DELETE") { await putTodos(env, todos.filter((x) => x !== t)); return json({ ok: true }); }
-      }
-      return json({ error: "not found" }, 404);
+      return legacyTodos(request, env, path.slice((base + "/api/todos").length), "web", json);
+    }
+
+    // Client API for the Mac menu bar, iPhone app/widget and scripts: Bearer API_TOKEN.
+    if (path === "/api/v1/todos" || path.startsWith("/api/v1/todos/")) {
+      if (!env.API_TOKEN || !safeEqual(request.headers.get("authorization") ?? "", `Bearer ${env.API_TOKEN}`))
+        return json({ error: "unauthorized" }, 401);
+      return apiV1(request, env, path.slice("/api/v1/todos".length));
     }
 
     if (!env.TILE_KEY || request.headers.get("x-tile-key") !== env.TILE_KEY) return json({ error: "unauthorized" }, 401);
@@ -406,20 +443,7 @@ export default {
       if (path.startsWith("/route/")) return tileJson(await route(decodeURIComponent(path.slice(7)), ctx));
       if (path === "/space") return tileJson(await space(env, ctx));
       if (path === "/ships") return tileJson(await ships(env, url.searchParams.get("r") ?? "sandiego"));
-      if (path === "/todos" && request.method === "GET") return tileJson({ todos: await getTodos(env) });
-      if (path === "/todos" && request.method === "POST") {
-        const body: any = await request.json().catch(() => ({}));
-        if (!body.text) return json({ error: "text required" }, 400);
-        return json(await addTodo(env, String(body.text)), 201);
-      }
-      const m = path.match(/^\/todos\/([^/]+)(\/done)?$/);
-      if (m) {
-        const todos = await getTodos(env);
-        const t = todos.find((x) => x.id === m[1]);
-        if (!t) return json({ error: "not found" }, 404);
-        if (m[2] && request.method === "POST") { setDone(t, !t.done); await putTodos(env, todos); return json(t); }
-        if (!m[2] && request.method === "DELETE") { await putTodos(env, todos.filter((x) => x !== t)); return json({ ok: true }); }
-      }
+      if (path === "/todos" || path.startsWith("/todos/")) return await legacyTodos(request, env, path.slice(6), "tile", tileJson);
       return json({ error: "not found" }, 404);
     } catch (err) {
       console.error(path, err);
