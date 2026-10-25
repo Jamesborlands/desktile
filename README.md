@@ -1,146 +1,154 @@
-# SkyTile (desktile)
+# SkyTile
 
-A DIY desk display (ESP32-S3 touchscreen) with four modes: Planes, Ships, Space and To-do.
-The to-do list is shared with Claude (MCP), the Mac menu bar and an iPhone app + widget.
-See `CLAUDE.md` for hardware, firmware and case notes.
+A little desk display that shows the planes overhead, the ships offshore, the next rocket
+launch and my to-do list. It's a 5" ESP32-S3 touchscreen in a 3D-printed wedge with a
+black anodized aluminum face and two clicky knobs. I add to-dos by asking Claude.
 
-## Architecture
+Inspired by [theskytile.com](https://theskytile.com). Built from scratch: firmware, case,
+backend and clients.
 
-```
- Desk tile (ESP32)  --X-Tile-Key-->  /todos ----------.
- Phone web app      --secret URL-->  /t/<WEB_SECRET>  |
- Claude (MCP)       --secret URL-->  /mcp/<MCP_SECRET>+--> Worker "skytile" --> TodoStore Durable Object
- Mac menu bar       --Bearer------>  /api/v1/todos    |    (Cloudflare)         (SQLite, one instance)
- iPhone app/widget  --Bearer------>  /api/v1/todos ---'
-```
+<p align="center">
+  <img src="docs/images/hero.png" width="760" alt="Mockup of the finished SkyTile: a black faceplate with the sleep dashboard on screen (ships map, clock, to-dos, next launch) and two silver knobs on the right">
+  <br><sub>Mockup of the finished tile, with a real screenshot from the device. The case is still being printed.</sub>
+</p>
 
-- **One source of truth:** the `TodoStore` Durable Object (`worker/src/todos.ts`). It has a
-  SQLite table `todos (id, text, done, position, source, created_at, completed_at)`.
-  Every change runs inside the object one at a time, so two clients can't overwrite each
-  other, and every read sees the latest write.
-- **Ids** are 8 hex characters (the tile stores ids in `char[10]`).
-- **Done items** disappear 24 hours after they were checked off.
-- **How fast changes show up:** the tile polls every 5 s on the To-do screen (every minute
-  otherwise). The Mac menu bar refreshes every 30 s. The iPhone app polls every 10 s while
-  open. The widget refreshes when iOS allows it (about every 15 min) and right after you
-  tap one of its checkboxes.
-- **Old storage:** the list used to live in KV (key `todos`). It was copied into TodoStore
-  on Oct 24, 2026, and the KV key is kept as a backup.
+## Four modes
 
-## Client API
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/planes.png" alt="Planes screen"></td>
+    <td width="50%"><img src="docs/images/ships.png" alt="Ships screen"></td>
+  </tr>
+  <tr>
+    <td><b>Planes.</b> Live aircraft from <a href="https://adsb.lol">adsb.lol</a>, drawn by class: airliner, fighter, military cargo, bizjet, prop, helicopter. Tap one for its flight, type, altitude, speed and route. Filters for military and interesting traffic.</td>
+    <td><b>Ships.</b> AIS positions from <a href="https://aisstream.io">aisstream.io</a>, collected by a Cloudflare Worker. Icons by vessel type (cargo, tanker, navy, cruise, sailboat...), with destination, speed and course.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/space.png" alt="Space screen"></td>
+    <td><img src="docs/images/todo.png" alt="To-do screen"></td>
+  </tr>
+  <tr>
+    <td><b>Space.</b> Countdown to the next launch (Launch Library 2) with a hint when a Vandenberg launch may be visible from home, plus the ISS ground track and the next pass overhead.</td>
+    <td><b>To-do.</b> A shared list. Tap to check items off. Claude, the Mac menu bar, an iPhone widget and a phone web app all edit the same list.</td>
+  </tr>
+</table>
 
-Base URL `https://skytile.seobubbles.workers.dev`, header `Authorization: Bearer $SKYTILE_API_TOKEN`.
+### Sleep dashboard
 
-| Method | Path | Body | Returns |
+After 30 seconds untouched the tile turns into a clock: the map keeps running on the left
+(following a moving ship or plane), with the time, open to-dos and the next launch on the right.
+
+<p align="center"><img src="docs/images/sleep.png" width="600" alt="Sleep dashboard"></p>
+
+### Hotspots
+
+The map cycles through busy waterways and ports: San Diego, Strait of Hormuz, Persian Gulf,
+Dover Strait, Rotterdam, Singapore Strait, Hong Kong, Taiwan Strait, Tokyo Bay, Puget Sound,
+SF Bay and New York Harbor. Tap the place name (or hold the top knob) for the next one. After
+3 minutes it goes back home.
+
+## Knobs
+
+Two Adafruit I2C rotary encoders sit to the right of the screen.
+
+| | Turn | Press | Hold |
 |---|---|---|---|
-| GET | `/api/v1/todos` | | `{todos: [...]}`, open first |
-| POST | `/api/v1/todos` | `{text, source?}` (source: mac, ios, widget, siri, web, api) | 201 `{todo}` |
-| POST | `/api/v1/todos/:id/complete` | | `{todo}` |
-| POST | `/api/v1/todos/:id/uncomplete` | | `{todo}` |
-| PATCH | `/api/v1/todos/:id` | `{text}` | `{todo}` |
-| DELETE | `/api/v1/todos/:id` | | `{ok: true}` |
-| POST | `/api/v1/todos/clear-completed` | | `{cleared: n}` |
+| **Top knob** | Switch mode | Change filter (All, Military, Interesting, Favorites) | Next hotspot |
+| **Bottom knob** | Move through planes, ships, launches or to-dos | Open details, or check off a to-do | Add or remove a favorite |
 
-A todo looks like `{id, text, done, position, source, created, doneAt?}` (times in unix ms).
+Touch works everywhere too: tap to select, pinch or use the buttons to zoom, drag to pan.
 
-```sh
-set -a; . ./.env; set +a
-curl -H "Authorization: Bearer $SKYTILE_API_TOKEN" $SKYTILE_URL/api/v1/todos
+## How it works
+
+```mermaid
+flowchart LR
+  tile["Desk tile<br/>ESP32-S3"]
+  adsb["adsb.lol<br/>aircraft"]
+  subgraph cf ["Cloudflare Worker"]
+    ships["/ships<br/>aisstream.io collector"]
+    space["/space<br/>launches + ISS"]
+    todos["/todos<br/>Durable Object (SQLite)"]
+    mcp["MCP server"]
+  end
+  claude["Claude"]
+  clients["Mac menu bar<br/>iPhone app + widget<br/>phone web app"]
+
+  tile -- "direct" --> adsb
+  tile --> ships
+  tile --> space
+  tile <--> todos
+  claude --> mcp --> todos
+  clients <--> todos
 ```
 
-The MCP tools (`list_todos`, `add_todo`, `complete_todo`, `remove_todo`, `clear_completed`)
-and the tile's `/todos` endpoints are unchanged. `edit_todo` (item, text) was added.
+- **Planes** come straight from adsb.lol, because it rate-limits Cloudflare's IPs. The tile
+  stays under its 500 requests a day per address: every 10 s while you're on the Planes
+  screen, every 5 min on the sleep dashboard, nothing on other screens.
+- **Ships:** aisstream.io is a WebSocket firehose, too heavy for the ESP32. The Worker keeps
+  one connection open for every hotspot asked for in the last 15 minutes and serves a
+  compact JSON list.
+- **Space:** Launch Library 2 with RocketLaunch.live as a fallback, and the ISS orbit
+  (TLE) from CelesTrak. The Worker works out the ISS ground track and the next good pass
+  over home, so the tile only draws them.
+- **To-dos:** one Durable Object is the single source of truth. Claude talks to it over MCP
+  ("add pick up M3 screws to my tile"). Details in [docs/todos.md](docs/todos.md).
 
-## Secrets
+## Hardware
 
-- `.env` (gitignored, copy `.env.example`): `SKYTILE_URL`, `SKYTILE_API_TOKEN` for clients and scripts.
-- `worker/.dev.vars` (gitignored): the Worker's secrets for local dev.
-- On Cloudflare: `cd worker && npx wrangler secret put API_TOKEN` (same value as
-  `SKYTILE_API_TOKEN`). Also `TILE_KEY`, `MCP_SECRET`, `WEB_SECRET`, `AISSTREAM_KEY`.
-- To rotate the token: generate one (`openssl rand -hex 32`), put it on the Worker, in
-  `.env`, in `~/.config/skytile/config`, and in the iPhone app's Settings.
+| Part | Notes |
+|---|---|
+| [Elecrow CrowPanel Advance 5.0" HMI](https://www.elecrow.com/) | ESP32-S3, 800x480 IPS, capacitive touch, WiFi. Its I2C port feeds the knobs. |
+| 2x [Adafruit I2C STEMMA QT Rotary Encoder #5880](https://www.adafruit.com/product/5880) | Seesaw firmware, push switch. Bridge the **A0** jumper on the top one so it moves to address 0x37 (changing the address in software doesn't stick). |
+| [Adafruit #4209](https://www.adafruit.com/product/4209) + [#4210](https://www.adafruit.com/product/4210) | QT-to-header cable (meets the panel's Grove cable) and a short QT cable between the knobs. |
+| 2x 20 mm aluminum knobs, M7x0.75 nuts | Set-screw knobs for the 6 mm D-shaft. |
+| Right-angle USB-C cable | The panel's USB-C faces backward, so a straight plug hits the base. |
+| Faceplate | 1.6 mm black anodized 5052 aluminum, laser cut from [`case/skytile_faceplate.dxf`](case/skytile_faceplate.dxf), held with 3M VHB tape. |
+| Case | Two printed parts in white PLA: [`skytile_shell.stl`](case/skytile_shell.stl) (print face down) and [`skytile_back.stl`](case/skytile_back.stl). GitHub shows both in 3D. |
 
-## Worker
+The case is parametric CadQuery ([`case/skytile_case.py`](case/skytile_case.py)): 15 degree
+lean, 171.6 x 92.3 mm face, knobs 42 mm apart.
+
+## Repo layout
+
+| Path | What |
+|---|---|
+| [`firmware/skytile/`](firmware/skytile) | PlatformIO project: LVGL UI, data fetching, knobs, OTA updates |
+| [`worker/`](worker) | Cloudflare Worker (TypeScript): ships, space, to-dos, MCP server |
+| [`clients/`](clients) | SwiftBar menu bar plugin, SwiftUI iPhone app + widget |
+| [`case/`](case) | CadQuery source, STL / STEP / DXF exports |
+| [`design/`](design) | Vehicle icons (SVG), knob simulator, parts list |
+
+## Build it
+
+**Worker**
 
 ```sh
 cd worker
 npm install
-npm test             # vitest in the Workers runtime: API, auth, tile contract, MCP output, KV migration
-npm run typecheck
+npm test
 npx wrangler deploy
+npx wrangler secret put TILE_KEY     # also MCP_SECRET, WEB_SECRET, API_TOKEN, AISSTREAM_KEY
 ```
 
-## Desk tile
-
-- **To-do screen:** one row per item, taller rows for text that wraps. Tap to check off.
-  It polls every 5 s and only redraws when the list changed.
-- **Sleep dashboard:** clock and date, then TO-DO (bulleted, wrapped, with "+N more" when
-  they don't all fit) and NEXT LAUNCH. Each section is hidden when it's empty, and NEXT
-  LAUNCH moves up when there are no to-dos.
-
-## Mac menu bar (SwiftBar)
-
-`clients/swiftbar/skytile-todos.30s.py` shows the open count in the menu bar. Click it to see
-the open items: click an item to check it off. "Add todo..." (or Cmd+Option+T) opens a dialog.
-Hover "Edit" and click an item to change its text (the dialog also has Delete). Items checked
-off today are listed under "Done today": click one to undo. "Clear done" removes them now;
-otherwise they disappear 24 hours after being checked off. It refreshes every 30 s and right
-after each click.
+**Firmware** (PlatformIO 6.1)
 
 ```sh
-brew install --cask swiftbar
-mkdir -p ~/.config/skytile "$HOME/Library/Application Support/SwiftBar/Plugins"
-cp .env ~/.config/skytile/config && chmod 600 ~/.config/skytile/config
-ln -sf "$PWD/clients/swiftbar/skytile-todos.30s.py" "$HOME/Library/Application Support/SwiftBar/Plugins/"
-open -a SwiftBar      # first launch: choose that Plugins folder if it asks
+cd firmware/skytile
+cp include/secrets.example.h include/secrets.h   # WiFi, home location, Worker URL, keys
+pio run -t upload                                 # first time over USB
+tools/ota.sh                                      # after that, over WiFi
 ```
 
-It only needs the macOS system `python3` (standard library). To try it in a terminal, run the
-script directly: it prints the menu.
+The ESP-IDF settings in `platformio.ini` matter: the RGB panel needs PSRAM bandwidth that
+WiFi also wants, and the defaults make the picture shift. See the notes in
+[`CLAUDE.md`](CLAUDE.md) before changing them.
 
-## iPhone
+**To-do clients:** setup for the Mac menu bar, iPhone app and web app is in
+[docs/todos.md](docs/todos.md).
 
-### Free option: the web app
+## Credits
 
-The Worker serves a phone-friendly list at `$SKYTILE_URL/t/<WEB_SECRET>` (the secret is in
-`worker/.dev.vars`). Open it in Safari, tap Share > Add to Home Screen, and it runs
-full screen like an app. No Apple developer account needed. No widget, though.
-
-### Native app + widget
-
-`clients/ios/` is a SwiftUI app with a WidgetKit extension (iOS 17+). The Xcode project is
-generated from `project.yml` with XcodeGen.
-
-- **App:** list, add field (stays focused for quick entry), tap or swipe right to check off,
-  swipe left to delete, pull to refresh, Settings for the URL and token.
-- **Widget:** small, medium and large home screen sizes, plus lock screen circular,
-  rectangular and inline. Tap a circle to check an item off without opening the app.
-  The "+" on medium and large opens the app ready to type.
-- **Siri and Shortcuts:** "Add a to-do in SkyTile" (Siri asks what to add). The "Add To-do"
-  action is also available in the Shortcuts app and for the Action button.
-- **Token:** stored in the keychain under the App Group, so the widget can read it too.
-
-### Run it on your iPhone
-
-1. `brew install xcodegen`, then `cd clients/ios && xcodegen && open SkyTile.xcodeproj`.
-2. Xcode > Settings > Accounts: add your Apple ID.
-3. Select the **SkyTile** target > Signing & Capabilities: tick "Automatically manage
-   signing" and pick your team. Do the same for **SkyTileWidget**. To make it stick across
-   `xcodegen` runs, put your Team ID in `DEVELOPMENT_TEAM` in `project.yml`.
-4. If Xcode says the bundle id or App Group is taken, change `BUNDLE_ID` and `APP_GROUP`
-   in `project.yml` (for example `com.yourname.skytile` and `group.com.yourname.skytile`)
-   and run `xcodegen` again.
-5. Plug in the iPhone and trust the Mac. On the phone, turn on Settings > Privacy &
-   Security > Developer Mode, then restart.
-6. Pick the iPhone as the run destination and press Run (Cmd+R). The first time, trust the
-   developer on the phone: Settings > General > VPN & Device Management.
-7. In the app, Settings: paste the token. To copy it from the Mac, run
-   `grep SKYTILE_API_TOKEN .env | cut -d= -f2 | tr -d '\n' | pbcopy` and paste on the
-   phone (Universal Clipboard). Tap "Save and test".
-8. Add the widget: long-press the home screen > Edit > Add Widget > SkyTile. For the lock
-   screen: long-press the lock screen > Customize > Lock Screen > add a SkyTile widget.
-
-With a free Apple ID, the app stops opening after 7 days until you press Run in Xcode
-again, and Xcode may refuse the App Groups capability, which the widget needs. A paid
-developer account ($99/yr) avoids both, and a build lasts a year. As of Oct 24, 2026 James
-is not using a paid account, so the native app is built and tested in the simulator only.
+Data from [adsb.lol](https://adsb.lol), [aisstream.io](https://aisstream.io),
+[Launch Library 2](https://thespacedevs.com/llapi), [RocketLaunch.live](https://www.rocketlaunch.live),
+[CelesTrak](https://celestrak.org). Coastlines from [Natural Earth](https://www.naturalearthdata.com)
+and [OpenStreetMap](https://www.openstreetmap.org/copyright). UI built with [LVGL](https://lvgl.io).
