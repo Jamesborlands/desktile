@@ -32,6 +32,11 @@ static const int MAXT = 30;            // to-dos kept
 static const int MAXL = 6;             // launches kept
 static const float RANGE_MIN = 5, RANGE_MAX = 250, RANGE_DEFAULT = 25;  // outer ring radius, nm
 static const uint32_t FETCH_MS = 10000;
+// adsb.lol allows 500 requests a day per IP (its x-ratelimit-limit header says
+// "500;w=86400"). Plane fetches spend tokens from a bucket that refills one every
+// 3 min (480 a day). It starts with PL_TOKENS_BOOT so restarts can't overspend.
+static const uint32_t PL_REFILL_MS = 180000, PL_IDLE_MS = 300000, PL_429_MS = 600000;
+static const int PL_TOKENS_MAX = 120, PL_TOKENS_BOOT = 30;
 
 static const int MAP_W = 500, MAP_H = 436, BAR_H = 44;
 // The map is MAP_W x MAP_H normally and full screen (800 x 480) while idle.
@@ -122,6 +127,8 @@ struct Todo {
 static SemaphoreHandle_t g_mtx;
 static volatile uint32_t g_last_ok = 0;  // millis of the last successful fetch (any feed)
 static volatile int g_net_status = 0;  // 0 connecting, 1 live, 2 error
+static bool g_idle = false;           // sleep dashboard showing
+static bool g_demo = false;           // demo to-dos (USB 'D'): ignore the Worker's list
 
 // Each feed: the net task fills the *_net copy and sets the flag; app_loop copies it.
 static Plane *g_net, *g_pl;
@@ -333,6 +340,7 @@ static void parse_space(const String &body) {
 static uint32_t g_td_hash = 0;
 
 static void parse_todos(const String &body) {
+  if (g_demo) return;
   uint32_t h = 2166136261u;  // FNV-1a
   for (size_t i = 0; i < body.length(); i++) h = (h ^ (uint8_t)body[i]) * 16777619u;
   if (h == g_td_hash) return;
@@ -489,12 +497,22 @@ static void net_task(void *) {
     float hlat = g_clat, hlon = g_clon, klon = g_klon;
     uint32_t now = millis();
 
-    // Planes: every 10 s on the Planes screen, every minute otherwise.
+    // Planes: only while the Planes screen is up (switching to it fetches right away).
+    // Every 10 s while someone is using it, every 5 min on the sleep dashboard, slower
+    // once the day's budget runs low, and nothing for 10 min after a 429.
+    static int pl_tokens = PL_TOKENS_BOOT;
+    static uint32_t pl_refill = now, pl_block_until = 0;
+    static bool pl_blocked = false;
+    uint32_t k = (now - pl_refill) / PL_REFILL_MS;
+    if (k) { pl_tokens = min(PL_TOKENS_MAX, pl_tokens + (int)k); pl_refill += k * PL_REFILL_MS; }
+    if (pl_blocked && (int32_t)(now - pl_block_until) >= 0) pl_blocked = false;
     float want = g_range * sqrtf((float)g_mw * g_mw + (float)g_mh * g_mh) / 2 / ring_px();  // reach the map corners
     int nm = want <= 30 ? 30 : (want <= 60 ? 60 : (want <= 130 ? 130 : 250));  // adsb.lol max is 250
     float pe = g_pan_e, pn = g_pan_n;
-    bool moved = m == M_PLANES && fabsf(pe - last_e) + fabsf(pn - last_n) > nm * 0.3f;
-    if (!t_pl || now - t_pl >= (m == M_PLANES ? FETCH_MS : 60000) || (m == M_PLANES && nm > last_nm) || moved) {
+    bool moved = fabsf(pe - last_e) + fabsf(pn - last_n) > nm * 0.3f;
+    bool due = m == M_PLANES && (!t_pl || now - t_pl >= (g_idle ? PL_IDLE_MS : FETCH_MS) || nm > last_nm || moved);
+    if (due && !pl_blocked && pl_tokens > 0) {
+      pl_tokens--;
       t_pl = now;
       last_nm = nm;
       last_e = pe;
@@ -505,12 +523,13 @@ static void net_task(void *) {
       snprintf(url, sizeof url, "https://api.adsb.lol/v2/point/%.4f/%.4f/%d", clat, clon, nm);
       String body;
       int code;
-      static int fails = 0;  // one rate-limited fetch (HTTP 429) is normal: keep showing the last data
       if (http_req("GET", url, false, body, code)) {
-        fails = 0;
         if (g_hs == hs) parse_planes(body, clat, clon, hlat, hlon, klon);  // skip if the hotspot changed meanwhile
+      } else {
+        Serial.printf("[net] planes HTTP %d (%d tokens left)\n", code, pl_tokens);
+        g_net_status = 2;
+        if (code == 429) { pl_blocked = true; pl_block_until = now + PL_429_MS; pl_tokens = 0; }
       }
-      else { Serial.printf("[net] planes HTTP %d\n", code); if (++fails >= 3) g_net_status = 2; }
     }
     // Ships: every 20 s on the Ships screen, every 2 min otherwise. The background
     // polls keep the Worker's aisstream collector awake, so the screen opens ready.
@@ -601,7 +620,6 @@ static lv_obj_t *ota_overlay, *ota_lbl, *ota_bar;
 static lv_obj_t *idle_ov, *idle_tag, *tag_eye, *tag_name, *tag_line;
 static const int DASH_TD = 7;  // to-dos shown on the idle dashboard
 static lv_obj_t *dash_time, *dash_date, *dash_td[DASH_TD], *dash_td_dot[DASH_TD], *dash_td_more, *dash_l_count, *dash_l_name, *dash_l_vis, *dash_td_sec, *dash_l_sec;
-static bool g_idle = false;
 
 static void set_text(lv_obj_t *l, const char *t) {
   if (strcmp(lv_label_get_text(l), t)) lv_label_set_text(l, t);
@@ -1339,8 +1357,38 @@ static void sort_todos() {
 static void toggle_todo(int i) {
   if (i < 0 || i >= g_td_n) return;
   g_td[i].done = !g_td[i].done;  // update the screen now; the Worker catches up
+  if (!g_demo) {
+    xSemaphoreTake(g_mtx, portMAX_DELAY);
+    if (g_tq_n < 8) strlcpy(g_tq[g_tq_n++], g_td[i].id, sizeof g_tq[0]);
+    xSemaphoreGive(g_mtx);
+  }
+  sort_todos();
+  refresh_todo();
+}
+
+// Made-up to-dos for screenshots (USB 'D'). Only on screen: nothing goes to the Worker,
+// and the real list comes back after a restart.
+void app_demo_todos() {
+  static const struct { const char *text; bool done; } DEMO[] = {
+      {"Order the black anodized faceplate", false},
+      {"Print the case in white PLA", false},
+      {"Pick up M3 screws and VHB tape", false},
+      {"Water the plants", false},
+      {"Book a haircut", false},
+      {"Solder the A0 jumper on the top knob", true},
+      {"Wire up both knobs", true},
+  };
+  g_demo = true;
   xSemaphoreTake(g_mtx, portMAX_DELAY);
-  if (g_tq_n < 8) strlcpy(g_tq[g_tq_n++], g_td[i].id, sizeof g_tq[0]);
+  g_td_n = 0;
+  for (auto &d : DEMO) {
+    Todo &t = g_td[g_td_n];
+    snprintf(t.id, sizeof t.id, "demo%d", g_td_n);
+    strlcpy(t.text, d.text, sizeof t.text);
+    t.done = d.done;
+    g_td_n++;
+  }
+  g_td_loaded = true;
   xSemaphoreGive(g_mtx);
   sort_todos();
   refresh_todo();

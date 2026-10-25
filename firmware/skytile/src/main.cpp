@@ -255,12 +255,13 @@ static void send_screenshot() {
 void loop()
 {
   esp_task_wdt_reset();
-  if (Serial.available()) {  // USB debug commands: S = screenshot, 0..3 = sleep on that mode
+  if (Serial.available()) {  // USB debug commands: S = screenshot, 0..3 = sleep on that mode, D = demo to-dos
     int c = Serial.read();
     if (c == 'S') send_screenshot();
     else if (c >= '0' && c <= '3') app_sleep_on(c - '0');
     else if (c == 'H') app_input(IN_MODE_HOLD);  // next hotspot (same as holding the top knob)
     else if (c == 'N') app_input(IN_MODE_NEXT);  // next mode (top knob turn)
+    else if (c == 'D') app_demo_todos();  // made-up to-dos for screenshots
   }
   app_loop();
   lv_timer_handler(); /* let the GUI do its work */
