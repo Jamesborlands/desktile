@@ -41,6 +41,18 @@ After 30 seconds untouched the tile turns into a clock: the map keeps running on
 
 <p align="center"><img src="docs/images/sleep.png" width="600" alt="Sleep dashboard"></p>
 
+### To-dos from the Mac menu bar
+
+The same list lives in the menu bar (a [SwiftBar](https://swiftbar.app) plugin): the open
+count up top, click an item to check it off, Option-Cmd-T to add one. There's also an
+iPhone app with home and lock screen widgets, a Siri Shortcut, and a phone web app.
+Setup is in [docs/todos.md](docs/todos.md).
+
+<p align="center">
+  <img src="docs/images/menubar.png" width="370" alt="SkyTile menu bar dropdown: open to-dos with circles, Add todo, Edit, and items done today">
+  <br><sub>Drawn from the plugin's actual menu output.</sub>
+</p>
+
 ### Hotspots
 
 The map cycles through busy waterways and ports: San Diego, Strait of Hormuz, Persian Gulf,
