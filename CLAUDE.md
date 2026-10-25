@@ -43,7 +43,7 @@ Owner: James, San Diego. He prefers direct, concise answers and no em dashes in 
 - **Power:** right-angle USB-C (Anker 90-degree cable / AuviPal adapter). A straight plug hits the sloped base. The cable exits through the slot in the back cover.
 
 ## Knob controls (from the interactive simulator)
-- **Top knob = Mode.** Turn: switch Planes / Ships / Space / To-do. Press: filter All / Military / Interesting / Favorites. Hold: next hotspot.
+- **Top knob = Mode.** Turn: switch Planes / Ships / Space / To-do. Press: filter All / Military / Interesting / Favorites. Hold (release before 2 s): next hotspot. Hold 2 s: home to San Diego.
 - **Bottom knob = Select.** Turn: move through items (planes, ships, launches, tasks). Press: open details / follow (to-do: check off). Hold: add or remove favorite.
 - Idle: after inactivity, return to the overview. Touch also works (tap to select, zoom buttons on the map).
 

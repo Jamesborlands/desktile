@@ -1909,6 +1909,10 @@ void app_input(InputEvt e) {
       if (!map_mode()) set_mode(M_PLANES);
       set_hotspot(g_hs + 1);
       break;
+    case IN_MODE_LONG:  // home to San Diego
+      if (!map_mode()) set_mode(M_PLANES);
+      set_hotspot(0);
+      break;
     case IN_SEL_NEXT:
       if (map_mode()) select_step(1);
       else if (g_mode == M_TODO) todo_step(1);
