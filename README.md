@@ -2,7 +2,8 @@
 
 A little desk display that shows the planes overhead, the ships offshore, the next rocket
 launch and my to-do list. It's a 5" ESP32-S3 touchscreen in a 3D-printed wedge with a
-black anodized aluminum face and two clicky knobs. I add to-dos by asking Claude.
+black anodized aluminum face and two clicky knobs. To-dos can be pushed to it from anything
+that speaks MCP (Claude, for one), Siri, the Mac menu bar or an iPhone widget.
 
 Inspired by [theskytile.com](https://theskytile.com). Built from scratch: firmware, case,
 backend and clients.
@@ -29,7 +30,7 @@ backend and clients.
   </tr>
   <tr>
     <td><b>Space.</b> Countdown to the next launch (Launch Library 2) with a hint when a Vandenberg launch may be visible from home, plus the ISS ground track and the next pass overhead.</td>
-    <td><b>To-do.</b> A shared list. Tap to check items off. Claude, the Mac menu bar, an iPhone widget and a phone web app all edit the same list.</td>
+    <td><b>To-do.</b> A shared list. Tap to check items off. Push items in over MCP (Claude), Siri, the Mac menu bar, an iPhone widget or a phone web app: they all edit the same list.</td>
   </tr>
 </table>
 
@@ -44,8 +45,9 @@ After 30 seconds untouched the tile turns into a clock: the map keeps running on
 
 The map cycles through busy waterways and ports: San Diego, Strait of Hormuz, Persian Gulf,
 Dover Strait, Rotterdam, Singapore Strait, Hong Kong, Taiwan Strait, Tokyo Bay, Puget Sound,
-SF Bay and New York Harbor. Tap the place name (or hold the top knob) for the next one. After
-3 minutes it goes back home.
+SF Bay and New York Harbor, each with its own airports. Tap the place name (or hold the top
+knob) for the next one, and tap HOME to jump back. After 3 minutes untouched it goes home
+by itself.
 
 ## Knobs
 
@@ -63,15 +65,15 @@ Touch works everywhere too: tap to select, pinch or use the buttons to zoom, dra
 ```mermaid
 flowchart LR
   tile["Desk tile<br/>ESP32-S3"]
-  adsb["adsb.lol<br/>aircraft"]
+  adsb["adsb.lol, adsb.fi,<br/>OpenSky<br/>aircraft"]
   subgraph cf ["Cloudflare Worker"]
     ships["/ships<br/>aisstream.io collector"]
     space["/space<br/>launches + ISS"]
     todos["/todos<br/>Durable Object (SQLite)"]
     mcp["MCP server"]
   end
-  claude["Claude"]
-  clients["Mac menu bar<br/>iPhone app + widget<br/>phone web app"]
+  claude["MCP clients<br/>(Claude)"]
+  clients["Mac menu bar<br/>iPhone app + widget<br/>Siri, phone web app"]
 
   tile -- "direct" --> adsb
   tile --> ships
@@ -81,17 +83,22 @@ flowchart LR
   clients <--> todos
 ```
 
-- **Planes** come straight from adsb.lol, because it rate-limits Cloudflare's IPs. The tile
-  stays under its 500 requests a day per address: every 10 s while you're on the Planes
-  screen, every 5 min on the sleep dashboard, nothing on other screens.
+- **Planes** come straight from the tile, because the free ADS-B feeds rate-limit Cloudflare's
+  IPs. It tries adsb.lol, then adsb.fi, then OpenSky, and uses the first that answers. Each
+  feed's daily cap is budgeted (adsb.lol allows 500 requests a day), and a feed that answers
+  429 is skipped for 10 minutes. Planes refresh every 10 s on the Planes screen and every 5 min
+  on the sleep dashboard. Routes come from adsbdb.com and are only shown when the plane is
+  actually on that route.
 - **Ships:** aisstream.io is a WebSocket firehose, too heavy for the ESP32. The Worker keeps
   one connection open for every hotspot asked for in the last 15 minutes and serves a
   compact JSON list.
 - **Space:** Launch Library 2 with RocketLaunch.live as a fallback, and the ISS orbit
   (TLE) from CelesTrak. The Worker works out the ISS ground track and the next good pass
   over home, so the tile only draws them.
-- **To-dos:** one Durable Object is the single source of truth. Claude talks to it over MCP
-  ("add pick up M3 screws to my tile"). Details in [docs/todos.md](docs/todos.md).
+- **To-dos:** one Durable Object is the single source of truth. The Worker exposes it as an
+  MCP server (connected to Claude, so "add pick up M3 screws to my tile" works), a REST API
+  for the Mac menu bar, iPhone app, widget and Siri Shortcut, and a small web app. Details in
+  [docs/todos.md](docs/todos.md).
 
 ## Hardware
 
@@ -148,7 +155,7 @@ WiFi also wants, and the defaults make the picture shift. See the notes in
 
 ## Credits
 
-Data from [adsb.lol](https://adsb.lol), [aisstream.io](https://aisstream.io),
+Data from [adsb.lol](https://adsb.lol), [adsb.fi](https://adsb.fi), [OpenSky Network](https://opensky-network.org), [adsbdb](https://www.adsbdb.com), [aisstream.io](https://aisstream.io),
 [Launch Library 2](https://thespacedevs.com/llapi), [RocketLaunch.live](https://www.rocketlaunch.live),
-[CelesTrak](https://celestrak.org). Coastlines from [Natural Earth](https://www.naturalearthdata.com)
+[CelesTrak](https://celestrak.org). Airports from [OurAirports](https://ourairports.com). Coastlines from [Natural Earth](https://www.naturalearthdata.com)
 and [OpenStreetMap](https://www.openstreetmap.org/copyright). UI built with [LVGL](https://lvgl.io).

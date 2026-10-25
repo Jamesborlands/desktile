@@ -32,11 +32,7 @@ static const int MAXT = 30;            // to-dos kept
 static const int MAXL = 6;             // launches kept
 static const float RANGE_MIN = 5, RANGE_MAX = 250, RANGE_DEFAULT = 25;  // outer ring radius, nm
 static const uint32_t FETCH_MS = 10000;
-// adsb.lol allows 500 requests a day per IP (its x-ratelimit-limit header says
-// "500;w=86400"). Plane fetches spend tokens from a bucket that refills one every
-// 3 min (480 a day). It starts with PL_TOKENS_BOOT so restarts can't overspend.
-static const uint32_t PL_REFILL_MS = 180000, PL_IDLE_MS = 300000, PL_429_MS = 600000;
-static const int PL_TOKENS_MAX = 120, PL_TOKENS_BOOT = 30;
+static const uint32_t PL_IDLE_MS = 300000, PL_429_MS = 600000;  // asleep on the map; pause after a 429
 
 static const int MAP_W = 500, MAP_H = 436, BAR_H = 44;
 // The map is MAP_W x MAP_H normally and full screen (800 x 480) while idle.
@@ -183,7 +179,7 @@ struct PsramAllocator : ArduinoJson::Allocator {
 static PsramAllocator g_psram_alloc;
 
 // One HTTPS request. worker=true adds the device key header for the SkyTile Worker.
-static bool http_req(const char *method, const char *url, bool worker, String &out, int &code) {
+static bool http_req(const char *method, const char *url, bool worker, String &out, int &code, const char *bearer = nullptr) {
   WiFiClientSecure client;
   client.setInsecure();  // TODO: pin CAs
   client.setHandshakeTimeout(10);  // seconds; the 120 s default let a hung adsb.lol stall every feed
@@ -193,6 +189,8 @@ static bool http_req(const char *method, const char *url, bool worker, String &o
   http.setUserAgent("SkyTile/0.1 (DIY desk display)");  // adsb.lol rejects generic agents
   if (!http.begin(client, url)) { code = -1; return false; }
   if (worker) http.addHeader("X-Tile-Key", TILE_KEY);
+  if (bearer) http.addHeader("Authorization", String("Bearer ") + bearer);
+  if (strstr(url, "opensky-network.org")) http.useHTTP10(true);  // its chunked keep-alive replies time out on read
   code = strcmp(method, "POST") == 0 ? http.POST("") : http.GET();
   bool ok = code >= 200 && code < 300;
   if (ok) { out = http.getString(); g_last_ok = millis(); }
@@ -200,17 +198,22 @@ static bool http_req(const char *method, const char *url, bool worker, String &o
   return ok;
 }
 
-static void parse_planes(const String &body, float clat, float clon, float hlat, float hlon, float klon) {
+// Distance from the hotspot center (home for San Diego); flight falls back to reg or hex.
+static void plane_finish(Plane &p, float hlat, float hlon, float klon) {
+  float dx = (p.lon - hlon) * klon;
+  float dy = (p.lat - hlat) * 60.0f;
+  p.dist_nm = sqrtf(dx * dx + dy * dy);
+  if (!p.flight[0]) strlcpy(p.flight, p.reg[0] ? p.reg : p.hex, sizeof p.flight);
+}
+
+// adsb.lol and adsb.fi: readsb JSON, {"ac": [{hex, flight, t, ...}]}.
+static int parse_readsb(const String &body, Plane *tmp, float hlat, float hlon, float klon) {
   JsonDocument filter(&g_psram_alloc);
   JsonObject f = filter["ac"].add<JsonObject>();
   for (auto k : {"hex", "flight", "t", "r", "desc", "alt_baro", "gs", "track", "lat", "lon", "dbFlags", "category"})
     f[k] = true;
   JsonDocument doc(&g_psram_alloc);
-  if (deserializeJson(doc, body, DeserializationOption::Filter(filter))) {
-    g_net_status = 2;
-    return;
-  }
-  static Plane *tmp = (Plane *)heap_caps_malloc(sizeof(Plane) * MAXRAW, MALLOC_CAP_SPIRAM);
+  if (deserializeJson(doc, body, DeserializationOption::Filter(filter))) return -1;
   int n = 0;
   for (JsonObject a : doc["ac"].as<JsonArray>()) {
     if (n >= MAXRAW) break;
@@ -230,11 +233,46 @@ static void parse_planes(const String &body, float clat, float clon, float hlat,
     p.lat = a["lat"];
     p.lon = a["lon"];
     p.mil = ((a["dbFlags"] | 0) & 1) != 0;
-    float dx = (p.lon - hlon) * klon;  // distance from the hotspot center (home for San Diego)
-    float dy = (p.lat - hlat) * 60.0f;
-    p.dist_nm = sqrtf(dx * dx + dy * dy);
-    if (!p.flight[0]) strlcpy(p.flight, p.reg[0] ? p.reg : p.hex, sizeof p.flight);
+    plane_finish(p, hlat, hlon, klon);
     n++;
+  }
+  return n;
+}
+
+// OpenSky: {"states": [[icao24, callsign, country, t_pos, t_contact, lon, lat, baro_alt_m,
+// on_ground, velocity_ms, track, vrate, sensors, geo_alt, squawk, spi, source, category]]}.
+// No type, registration or military flag, so these planes get the generic icons.
+static int parse_opensky(const String &body, Plane *tmp, float hlat, float hlon, float klon) {
+  static const char *CAT[] = {"", "", "A1", "A2", "A3", "A4", "A5", "A6", "A7"};  // OpenSky 0..8 -> ADS-B
+  JsonDocument doc(&g_psram_alloc);
+  if (deserializeJson(doc, body)) return -1;
+  int n = 0;
+  for (JsonArray a : doc["states"].as<JsonArray>()) {
+    if (n >= MAXRAW) break;
+    if (!a[5].is<float>() || !a[6].is<float>()) continue;
+    Plane &p = tmp[n];
+    memset(&p, 0, sizeof p);
+    strlcpy(p.hex, a[0] | "", sizeof p.hex);
+    strlcpy(p.flight, a[1] | "", sizeof p.flight);
+    for (int i = strlen(p.flight) - 1; i >= 0 && p.flight[i] == ' '; i--) p.flight[i] = 0;
+    int c = a[17] | 0;
+    strlcpy(p.cat, c >= 0 && c <= 8 ? CAT[c] : "", sizeof p.cat);
+    p.alt = (a[8] | false) || !a[7].is<float>() ? -1 : (int)(a[7].as<float>() * 3.28084f);
+    p.gs = (a[9] | 0.0f) * 1.94384f;
+    p.track = a[10] | 0.0f;
+    p.lon = a[5];
+    p.lat = a[6];
+    plane_finish(p, hlat, hlon, klon);
+    n++;
+  }
+  return n;
+}
+
+// Sort, keep the nearest MAXP and hand them to the UI. n < 0 means the parse failed.
+static void parse_planes(int n, Plane *tmp, float clat, float clon, float klon, const char *feed) {
+  if (n < 0) {
+    g_net_status = 2;
+    return;
   }
   // nearest to the view center first (that's what is on screen)
   auto key = [&](const Plane &q) {
@@ -255,7 +293,7 @@ static void parse_planes(const String &body, float clat, float clon, float hlat,
   g_net_new = true;
   xSemaphoreGive(g_mtx);
   g_net_status = 1;
-  Serial.printf("[net] %d planes\n", n);
+  Serial.printf("[net] %d planes from %s\n", n, feed);
 }
 
 static void parse_ships(const String &body) {
@@ -447,6 +485,71 @@ static void ota_task(void *) {
   }
 }
 
+// Plane feeds, tried in order. adsb.lol and adsb.fi send the same readsb JSON; OpenSky
+// is the last resort (no aircraft type or military flag). Daily caps (per IP, from their
+// rate-limit headers): adsb.lol 500 requests, OpenSky 400 credits without an account,
+// adsb.fi none (1 request a second). A capped feed spends tokens from a bucket that
+// refills under its cap and starts low, so restarts can't overspend. A 429 parks a feed
+// for 10 minutes.
+struct PlaneFeed {
+  const char *name;
+  uint32_t refill_ms;  // one token per refill_ms; 0 = no daily cap
+  int max, tokens;
+  uint32_t refill_at, block_until;
+  bool blocked;
+};
+static PlaneFeed g_feeds[3] = {
+    {"adsb.lol", 180000, 120, 30, 0, 0, false},  // 480 a day
+    {"adsb.fi", 0, 0, 0, 0, 0, false},
+#ifdef OPENSKY_ID
+    {"opensky", 24000, 300, 50, 0, 0, false},  // account: 3,600 credits a day
+#else
+    {"opensky", 240000, 40, 10, 0, 0, false},  // anonymous: 360 credits a day
+#endif
+};
+
+#ifdef OPENSKY_ID
+// OpenSky OAuth2 client credentials: a token lasts 30 min. Returns nullptr if login fails
+// (the request then goes out anonymously).
+static const char *opensky_token(uint32_t now) {
+  static String token;
+  static uint32_t expires = 0;
+  if (token.length() && (int32_t)(expires - now) > 60000) return token.c_str();
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setHandshakeTimeout(10);
+  HTTPClient http;
+  http.setConnectTimeout(8000);
+  http.setTimeout(8000);
+  if (!http.begin(client, "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token")) return nullptr;
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  int code = http.POST(String("grant_type=client_credentials&client_id=") + OPENSKY_ID + "&client_secret=" + OPENSKY_SECRET);
+  token = "";
+  if (code == 200) {
+    JsonDocument filter(&g_psram_alloc), doc(&g_psram_alloc);
+    filter["access_token"] = true;
+    filter["expires_in"] = true;
+    if (!deserializeJson(doc, http.getString(), DeserializationOption::Filter(filter))) {
+      token = doc["access_token"] | "";
+      expires = now + (doc["expires_in"] | 1800) * 1000UL;
+    }
+  }
+  http.end();
+  Serial.printf("[net] opensky login %s (HTTP %d)\n", token.length() ? "ok" : "failed", code);
+  return token.length() ? token.c_str() : nullptr;
+}
+#endif
+
+static bool feed_ready(PlaneFeed &f, uint32_t now, int cost) {
+  if (f.blocked && (int32_t)(now - f.block_until) >= 0) f.blocked = false;
+  if (f.blocked) return false;
+  if (!f.refill_ms) { f.tokens = cost; return true; }  // uncapped
+  if (!f.refill_at) f.refill_at = now;
+  uint32_t k = (now - f.refill_at) / f.refill_ms;
+  if (k) { f.tokens = min(f.max, f.tokens + (int)k); f.refill_at += k * f.refill_ms; }
+  return f.tokens >= cost;
+}
+
 static void net_task(void *) {
   WiFi.persistent(false);  // no flash writes on (re)connect: they stall the display
   WiFi.mode(WIFI_STA);
@@ -498,37 +601,54 @@ static void net_task(void *) {
     uint32_t now = millis();
 
     // Planes: only while the Planes screen is up (switching to it fetches right away).
-    // Every 10 s while someone is using it, every 5 min on the sleep dashboard, slower
-    // once the day's budget runs low, and nothing for 10 min after a 429.
-    static int pl_tokens = PL_TOKENS_BOOT;
-    static uint32_t pl_refill = now, pl_block_until = 0;
-    static bool pl_blocked = false;
-    uint32_t k = (now - pl_refill) / PL_REFILL_MS;
-    if (k) { pl_tokens = min(PL_TOKENS_MAX, pl_tokens + (int)k); pl_refill += k * PL_REFILL_MS; }
-    if (pl_blocked && (int32_t)(now - pl_block_until) >= 0) pl_blocked = false;
+    // Every 10 s while someone is using it, every 5 min on the sleep dashboard. Each fetch
+    // tries the feeds in order and uses the first that answers.
     float want = g_range * sqrtf((float)g_mw * g_mw + (float)g_mh * g_mh) / 2 / ring_px();  // reach the map corners
     int nm = want <= 30 ? 30 : (want <= 60 ? 60 : (want <= 130 ? 130 : 250));  // adsb.lol max is 250
     float pe = g_pan_e, pn = g_pan_n;
     bool moved = fabsf(pe - last_e) + fabsf(pn - last_n) > nm * 0.3f;
     bool due = m == M_PLANES && (!t_pl || now - t_pl >= (g_idle ? PL_IDLE_MS : FETCH_MS) || nm > last_nm || moved);
-    if (due && !pl_blocked && pl_tokens > 0) {
-      pl_tokens--;
-      t_pl = now;
-      last_nm = nm;
-      last_e = pe;
-      last_n = pn;
+    if (due) {
       float clat = hlat + pn / 60.0f, clon = hlon + pe / klon;
       Serial.printf("[mem] internal free %u, largest %u\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-      char url[128];
-      snprintf(url, sizeof url, "https://api.adsb.lol/v2/point/%.4f/%.4f/%d", clat, clon, nm);
-      String body;
-      int code;
-      if (http_req("GET", url, false, body, code)) {
-        if (g_hs == hs) parse_planes(body, clat, clon, hlat, hlon, klon);  // skip if the hotspot changed meanwhile
+      static Plane *tmp = (Plane *)heap_caps_malloc(sizeof(Plane) * MAXRAW, MALLOC_CAP_SPIRAM);
+      bool fetched = false;
+      for (int f = 0; f < 3 && !fetched; f++) {
+        PlaneFeed &fd = g_feeds[f];
+        float dlat = nm / 60.0f, dlon = nm / klon;
+        float area = 4 * dlat * dlon;  // square degrees: OpenSky charges 1 credit up to 25, 2 up to 100, 3 up to 400
+        int cost = f == 2 ? (area <= 25 ? 1 : area <= 100 ? 2 : 3) : 1;
+        if (!feed_ready(fd, now, cost)) continue;
+        char url[160];
+        if (f == 0) snprintf(url, sizeof url, "https://api.adsb.lol/v2/point/%.4f/%.4f/%d", clat, clon, nm);
+        else if (f == 1) snprintf(url, sizeof url, "https://opendata.adsb.fi/api/v3/lat/%.4f/lon/%.4f/dist/%d", clat, clon, nm);
+        else snprintf(url, sizeof url, "https://opensky-network.org/api/states/all?lamin=%.3f&lomin=%.3f&lamax=%.3f&lomax=%.3f&extended=1",
+                      clat - dlat, clon - dlon, clat + dlat, clon + dlon);
+        String body;
+        int code;
+        fd.tokens -= cost;
+        const char *bearer = nullptr;
+#ifdef OPENSKY_ID
+        if (f == 2) bearer = opensky_token(now);
+#endif
+        uint32_t t0 = millis();
+        if (!http_req("GET", url, false, body, code, bearer)) {
+          Serial.printf("[net] planes %s HTTP %d after %u ms (%d tokens left)\n", fd.name, code, millis() - t0, fd.tokens);
+          if (code == 429) fd.block_until = now + PL_429_MS, fd.blocked = true;
+          continue;
+        }
+        fetched = true;
+        int n = f == 2 ? parse_opensky(body, tmp, hlat, hlon, klon) : parse_readsb(body, tmp, hlat, hlon, klon);
+        if (g_hs == hs) parse_planes(n, tmp, clat, clon, klon, fd.name);  // skip if the hotspot changed meanwhile
+      }
+      if (fetched) {
+        t_pl = now;
+        last_nm = nm;
+        last_e = pe;
+        last_n = pn;
       } else {
-        Serial.printf("[net] planes HTTP %d (%d tokens left)\n", code, pl_tokens);
         g_net_status = 2;
-        if (code == 429) { pl_blocked = true; pl_block_until = now + PL_429_MS; pl_tokens = 0; }
+        t_pl = now - (g_idle ? PL_IDLE_MS : FETCH_MS) + 30000;  // nothing answered: try again in 30 s
       }
     }
     // Ships: every 20 s on the Ships screen, every 2 min otherwise. The background
@@ -604,6 +724,7 @@ static lv_obj_t *fchip, *chip_filter_lbl, *chip_status_lbl, *chip_dot, *bar_obj,
 static lv_obj_t *scr_map;
 static lv_obj_t *map_obj, *geo, *empty_lbl, *ring_lbl[2], *ring_obj[2], *home_obj, *recenter_btn;
 static lv_obj_t *hs_btn, *hs_lbl;  // place button (top-left of the map): tap = next hotspot, hold = home
+static lv_obj_t *hs_home_btn;      // next to it while away from San Diego: tap = home
 static lv_obj_t *mk[MAXP], *mk_img[MAXP], *mk_lbl[MAXP];
 static lv_obj_t *c_type;
 static lv_obj_t *c_eye, *c_call, *c_desc, *c_tag, *c_route, *c_cities, *c_reg, *c_favbtn, *c_favbtn_lbl;
@@ -862,7 +983,7 @@ static void refresh_card_plane() {
     snprintf(b, sizeof b, "%s to %s", r.oc, r.dc);
     set_text(c_cities, b);
   } else {
-    set_text(c_route, "Route unknown");
+    set_text(c_route, has_cs ? "Route unknown" : "Private flight");  // tail-number callsigns never file a route
     set_text(c_cities, "");
   }
   const char *tag = p->mil ? "MILITARY" : (is_heavy(p->type) ? "HEAVY" : "");
@@ -942,6 +1063,51 @@ static const Airport AIRPORTS[] = {
     {"LGB", 33.8177f, -118.1516f, true},  {"ONT", 34.0560f, -117.6012f, true},
     {"PSP", 33.8297f, -116.5067f, true},  {"IPL", 32.8342f, -115.5786f, false},
     {"MXL", 32.6306f, -115.2416f, true},
+    // Other hotspots (generated from OurAirports: large airports are major, medium ones with airline service are not)
+    // hormuz
+    {"GSM", 26.7546f, 55.9024f, true}, {"RKT", 25.6135f, 55.9388f, true},
+    {"BND", 27.2183f, 56.3778f, true}, {"FJR", 25.1084f, 56.3281f, true},
+    {"KHS", 26.1710f, 56.2406f, false},
+    // gulf
+    {"BAH", 26.2673f, 50.6376f, true}, {"DOH", 25.2731f, 51.6081f, true},
+    {"DIA", 25.2594f, 51.5655f, true}, {"DHA", 26.2654f, 50.1520f, true},
+    {"KIH", 26.5254f, 53.9805f, true}, {"DMM", 26.4691f, 49.7982f, true},
+    {"HOF", 25.2853f, 49.4852f, true}, {"AZI", 24.4271f, 54.4599f, true},
+    {"SYZ", 29.5392f, 52.5898f, true}, {"AUH", 24.4410f, 54.6492f, true},
+    {"DWC", 24.8962f, 55.1624f, true}, {"DXB", 25.2498f, 55.3710f, true},
+    // dover
+    {"SEN", 51.5706f, 0.6936f, false},
+    // rotterdam
+    {"RTM", 51.9569f, 4.4372f, true}, {"AMS", 52.3086f, 4.7639f, true},
+    // singapore
+    {"SIN", 1.3502f, 103.9940f, true}, {"BTH", 1.1210f, 104.1190f, true},
+    {"JHB", 1.6413f, 103.6700f, true}, {"XSP", 1.4156f, 103.8667f, false},
+    {"TNJ", 0.9240f, 104.5334f, false},
+    // hongkong
+    {"HKG", 22.3118f, 113.9149f, true}, {"SZX", 22.6395f, 113.8033f, true},
+    {"MFM", 22.1496f, 113.5920f, true},
+    // taiwan
+    {"MZG", 23.5687f, 119.6280f, true}, {"RMQ", 24.2647f, 120.6210f, true},
+    {"JJN", 24.7959f, 118.5886f, true}, {"XMN", 24.5439f, 118.1275f, true},
+    {"FOC", 25.9293f, 119.6725f, true}, {"TNN", 22.9504f, 120.2060f, true},
+    {"TPE", 25.0777f, 121.2330f, true}, {"HUN", 24.0232f, 121.6180f, true},
+    {"TSA", 25.0672f, 121.5528f, true}, {"KHH", 22.5771f, 120.3500f, true},
+    {"KNH", 24.4279f, 118.3590f, false}, {"CYI", 23.4626f, 120.3905f, false},
+    // tokyobay
+    {"HND", 35.5497f, 139.7870f, true}, {"NRT", 35.7686f, 140.3887f, true},
+    {"OIM", 34.7820f, 139.3600f, false},
+    // pugetsound
+    {"SEA", 47.4479f, -122.3103f, true}, {"PAE", 47.9063f, -122.2820f, false},
+    {"BFI", 47.5270f, -122.2999f, false}, {"TIW", 47.2674f, -122.5773f, false},
+    {"FRD", 48.5237f, -123.0246f, false},
+    // sfbay
+    {"OAK", 37.7201f, -122.2212f, true}, {"SFO", 37.6198f, -122.3748f, true},
+    {"SJC", 37.3625f, -121.9292f, true}, {"SQL", 37.5131f, -122.2508f, false},
+    {"CCR", 37.9897f, -122.0570f, false},
+    // nyc
+    {"EWR", 40.6894f, -74.1705f, true}, {"JFK", 40.6394f, -73.7793f, true},
+    {"LGA", 40.7772f, -73.8726f, true}, {"TEB", 40.8501f, -74.0608f, false},
+    {"HPN", 41.0670f, -73.7076f, false},
 };
 
 // One set of polylines (home OSM coastline, or the hotspot coastlines).
@@ -1056,6 +1222,11 @@ static void refresh_map() {
     char hb[48];
     snprintf(hb, sizeof hb, LV_SYMBOL_GPS "  %s  " LV_SYMBOL_RIGHT, HOTSPOTS[g_hs].label);
     set_text(hs_lbl, hb);
+    show(hs_home_btn, g_hs != 0);
+    if (g_hs != 0) {
+      lv_obj_update_layout(hs_btn);  // the place button's width follows its label
+      lv_obj_align_to(hs_home_btn, hs_btn, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+    }
     show(recenter_btn, (g_pan_e != 0 || g_pan_n != 0) && g_mw == MAP_W);
     char b[16];
     for (int r = 0; r < 2; r++) {
@@ -1828,6 +1999,10 @@ static void on_hotspot(lv_event_t *e) {
   g_last_touch = millis();
   set_hotspot(lv_event_get_code(e) == LV_EVENT_LONG_PRESSED ? 0 : g_hs + 1);
 }
+static void on_hotspot_home(lv_event_t *) {
+  g_last_touch = millis();
+  set_hotspot(0);
+}
 
 // Tap anywhere on the map: select the nearest item within finger distance.
 static void on_map_click(lv_event_t *e) {
@@ -1951,6 +2126,15 @@ static void build_map_screen(lv_obj_t *scr) {
   hs_lbl = mk_label(hs_btn, "", &lv_font_montserrat_12, 0xc9d3e2, 0, 0);
   lv_obj_set_style_text_letter_space(hs_lbl, 1, 0);
   lv_obj_align(hs_lbl, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t *home_lbl;
+  hs_home_btn = mk_btn(map_obj, LV_SYMBOL_HOME "  HOME", 0, 10, LV_SIZE_CONTENT, 34, on_hotspot_home, nullptr, &home_lbl);
+  lv_obj_set_style_text_font(home_lbl, &lv_font_montserrat_12, 0);  // same look as the place button
+  lv_obj_set_style_text_letter_space(home_lbl, 1, 0);
+  lv_obj_set_style_bg_opa(hs_home_btn, LV_OPA_80, 0);
+  lv_obj_set_style_radius(hs_home_btn, 17, 0);
+  lv_obj_set_style_pad_hor(hs_home_btn, 14, 0);
+  lv_obj_set_ext_click_area(hs_home_btn, 8);
+  lv_obj_add_flag(hs_home_btn, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_t *card = map_card = mk_card(scr_map, MAP_W, 800 - MAP_W);
   c_eye = mk_label(card, "", &lv_font_montserrat_12, C_MUTED, 20, 18);
