@@ -1115,6 +1115,16 @@ static const Airport AIRPORTS[] = {
     {"EWR", 40.6894f, -74.1705f, true}, {"JFK", 40.6394f, -73.7793f, true},
     {"LGA", 40.7772f, -73.8726f, true}, {"TEB", 40.8501f, -74.0608f, false},
     {"HPN", 41.0670f, -73.7076f, false},
+    // lax
+    {"BUR", 34.2028f, -118.3581f, true}, {"HHR", 33.9228f, -118.3350f, false},
+    // denver
+    {"DEN", 39.8600f, -104.6738f, true}, {"BJC", 39.9088f, -105.1170f, false},
+    // london
+    {"LHR", 51.4707f, -0.4599f, true}, {"LGW", 51.1487f, -0.1857f, true},
+    {"LTN", 51.8747f, -0.3683f, true}, {"STN", 51.8850f, 0.2350f, true},
+    {"LCY", 51.5053f, 0.0553f, false},
+    // tokyo
+    {"IBR", 36.1815f, 140.4144f, true},
 };
 
 // One set of polylines (home OSM coastline, or the hotspot coastlines).
@@ -1614,6 +1624,7 @@ static void apply_backlight() {
 static void refresh_all();
 static void set_mode(Mode m);
 static void set_hotspot(int i);
+static void next_hotspot();
 
 // Idle dashboard: live map on the left (full height), and a column on the right with
 // the time, open to-dos and the next launch countdown.
@@ -1885,10 +1896,14 @@ static void refresh_all() {
 
 // Planes and Ships each remember their own zoom (ships are mostly 20-50 nm offshore).
 static float g_mode_range[2] = {RANGE_DEFAULT, 50};
+// Planes and Ships each have their own hotspot list (airports vs waterways); San Diego is on both.
+static inline uint8_t hs_screen() { return g_mode == M_SHIPS ? 2 : 1; }
+
 static void set_mode(Mode m) {
   if (map_mode()) g_mode_range[sel_slot()] = g_range;
   g_mode = m;
   if (map_mode()) g_range = g_mode_range[sel_slot()];
+  if (map_mode() && !(HOTSPOTS[g_hs].screens & hs_screen())) set_hotspot(0);  // not on this screen's list: go home
   refresh_all();
 }
 
@@ -1911,7 +1926,7 @@ void app_input(InputEvt e) {
     case IN_MODE_PREV: set_mode((Mode)((g_mode + 3) % 4)); break;
     case IN_MODE_PRESS:  // next hotspot (jumps to the map if you're on Space or To-do); the filter is on the top-bar chip
       if (!map_mode()) set_mode(M_PLANES);
-      set_hotspot(g_hs + 1);
+      next_hotspot();
       break;
     case IN_MODE_HOLD:  // home to San Diego
       if (!map_mode()) set_mode(M_PLANES);
@@ -1936,7 +1951,10 @@ void app_input(InputEvt e) {
 
 // ---------------------------------------------------------------- touch handlers
 static void on_tab(lv_event_t *e) { set_mode((Mode)(intptr_t)lv_event_get_user_data(e)); }
-static void on_filter(lv_event_t *) { app_input(IN_MODE_PRESS); }
+static void on_filter(lv_event_t *) {
+  g_last_touch = millis();
+  if (g_mode == M_PLANES) { g_filter = (Filter)((g_filter + 1) % 4); refresh_all(); }
+}
 static void on_prev(lv_event_t *) { app_input(IN_SEL_PREV); }
 static void on_next(lv_event_t *) { app_input(IN_SEL_NEXT); }
 static void on_fav(lv_event_t *) { app_input(IN_SEL_HOLD); }
@@ -2003,9 +2021,17 @@ static void set_hotspot(int i) {
   Serial.printf("[ui] hotspot %s\n", h.id);
   refresh_all();
 }
+// The next hotspot on this screen's list.
+static void next_hotspot() {
+  int i = g_hs;
+  do i = (i + 1) % HOTSPOT_COUNT;
+  while (!(HOTSPOTS[i].screens & hs_screen()));
+  set_hotspot(i);
+}
 static void on_hotspot(lv_event_t *e) {
   g_last_touch = millis();
-  set_hotspot(lv_event_get_code(e) == LV_EVENT_LONG_PRESSED ? 0 : g_hs + 1);
+  if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) set_hotspot(0);
+  else next_hotspot();
 }
 static void on_hotspot_home(lv_event_t *) {
   g_last_touch = millis();

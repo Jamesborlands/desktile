@@ -55,11 +55,12 @@ Setup is in [docs/todos.md](docs/todos.md).
 
 ### Hotspots
 
-The map cycles through busy waterways and ports: San Diego, Strait of Hormuz, Persian Gulf,
-Dover Strait, Rotterdam, Singapore Strait, Hong Kong, Taiwan Strait, Tokyo Bay, Puget Sound,
-SF Bay and New York Harbor, each with its own airports. Tap the place name (or press the top
-knob) for the next one. Tap HOME, or hold the top knob, to jump back. After 3 minutes untouched it goes home
-by itself.
+Planes and Ships each have their own list of places. Planes visits big airports: San Diego,
+Los Angeles, Denver, London Heathrow and Tokyo. Ships visits busy waterways and ports: San Diego,
+Strait of Hormuz, Persian Gulf, Dover Strait, Rotterdam, Singapore Strait, Hong Kong, Taiwan
+Strait, Tokyo Bay, Puget Sound, SF Bay and New York Harbor. Tap the place name (or press the top
+knob) for the next one. Tap HOME, or hold the top knob, to jump back. After 3 minutes untouched it
+goes home by itself.
 
 ## Knobs
 
