@@ -416,6 +416,7 @@ struct Route {
 static Route g_routes[24];
 static int g_route_next = 0;
 static char g_route_req[10] = "";
+static float g_route_lat, g_route_lon;  // where that plane is: the Worker picks the leg it fits
 static volatile bool g_route_new = false;
 
 static const Route *find_route(const char *cs) {
@@ -424,22 +425,23 @@ static const Route *find_route(const char *cs) {
   return nullptr;
 }
 
-static void fetch_route(const char *cs) {
+static void fetch_route(const char *cs, float lat, float lon) {
   Route r = {};
   strlcpy(r.cs, cs, sizeof r.cs);
   r.st = 2;
-  char url[128];
-  snprintf(url, sizeof url, "%s/route/%s", WORKER_URL, cs);
+  char url[160];
+  snprintf(url, sizeof url, "%s/route/%s?lat=%.3f&lon=%.3f", WORKER_URL, cs, lat, lon);
   String body;
   int code;
   if (http_req("GET", url, true, body, code)) {
     JsonDocument doc(&g_psram_alloc);
-    if (!deserializeJson(doc, body) && (doc["found"] | false)) {
+    bool ok = !deserializeJson(doc, body);
+    if (ok) strlcpy(r.airline, doc["airline"] | "", sizeof r.airline);  // known even when the route isn't
+    if (ok && (doc["found"] | false)) {
       strlcpy(r.o, doc["o"] | "", sizeof r.o);
       strlcpy(r.d, doc["d"] | "", sizeof r.d);
       strlcpy(r.oc, doc["oc"] | "", sizeof r.oc);
       strlcpy(r.dc, doc["dc"] | "", sizeof r.dc);
-      strlcpy(r.airline, doc["airline"] | "", sizeof r.airline);
       r.olat = doc["olat"] | 0.0f;
       r.olon = doc["olon"] | 0.0f;
       r.dlat = doc["dlat"] | 0.0f;
@@ -694,9 +696,10 @@ static void net_task(void *) {
     char req[10];
     xSemaphoreTake(g_mtx, portMAX_DELAY);
     strlcpy(req, g_route_req, sizeof req);
+    float rlat = g_route_lat, rlon = g_route_lon;
     g_route_req[0] = 0;
     xSemaphoreGive(g_mtx);
-    if (req[0] && !find_route(req)) fetch_route(req);
+    if (req[0] && !find_route(req)) fetch_route(req, rlat, rlon);
     vTaskDelay(pdMS_TO_TICKS(200));
   }
 }
@@ -969,10 +972,14 @@ static void refresh_card_plane() {
   xSemaphoreTake(g_mtx, portMAX_DELAY);
   const Route *rt = find_route(p->flight);
   Route r = rt ? *rt : Route{};
-  if (!rt && has_cs) strlcpy(g_route_req, p->flight, sizeof g_route_req);
+  if (!rt && has_cs) {
+    strlcpy(g_route_req, p->flight, sizeof g_route_req);
+    g_route_lat = p->lat;
+    g_route_lon = p->lon;
+  }
   xSemaphoreGive(g_mtx);
   // airline big, aircraft type small; without an airline the type moves up
-  if (r.st == 1 && r.airline[0]) { set_text(c_desc, r.airline); set_text(c_type, type); }
+  if (r.st && r.airline[0]) { set_text(c_desc, r.airline); set_text(c_type, type); }
   else { set_text(c_desc, type); set_text(c_type, ""); }
   if (!rt && has_cs) {
     set_text(c_route, "...");

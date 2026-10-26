@@ -2,7 +2,8 @@
 // adsb.lol on the tile: it rate-limits Cloudflare's shared IPs), the to-do list, and an
 // MCP server so Claude can manage the to-do list.
 //
-//   GET  /route/:callsign        adsbdb origin/destination (cached a day)
+//   GET  /route/:callsign?lat=&lon=  origin/destination of the leg the plane is flying
+//                                (adsb.lol VRS data + adsbdb, cached a day)
 //   GET  /space                  next launches + ISS position and next pass
 //   GET  /ships?r=<region>       vessels near San Diego or a hotspot (aisstream.io via Durable Object)
 //   GET  /todos                  list; POST /todos {text}; POST /todos/:id/done; DELETE /todos/:id
@@ -82,21 +83,67 @@ function distNm(lat1: number, lon1: number, lat2: number, lon2: number) {
 }
 
 // ---------------------------------------------------------------- routes
-async function route(callsign: string, ctx: ExecutionContext) {
+type Airport = { code: string; city: string; lat: number; lon: number };
+type Leg = { o: Airport; d: Airport };
+
+// Every leg either crowd-sourced database knows for a callsign (cached a day). Both are often
+// stale: adsb.lol's VRS standing data is right for most airlines, adsbdb for more Southwest
+// flights (their numbers change daily), so collect both and let the plane's position decide.
+async function routeLegs(cs: string, ctx: ExecutionContext) {
+  return cached(`legs/${cs}`, 86400, ctx, async () => {
+    const get = (url: string) =>
+      fetch(url, { headers: { "user-agent": UA }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT) })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null) as Promise<any>;
+    const [vrs, adsbdb] = await Promise.all([
+      get(`https://vrs-standing-data.adsb.lol/routes/${cs.slice(0, 2)}/${cs}.json`),
+      get(`https://api.adsbdb.com/v0/callsign/${cs}`),
+    ]);
+    const legs: Leg[] = [];
+    const stops: Airport[] = (vrs?._airports ?? [])
+      .filter((a: any) => a.iata && isFinite(a.lat))
+      .map((a: any) => ({ code: a.iata, city: a.location ?? "", lat: a.lat, lon: a.lon }));
+    for (let i = 0; i + 1 < stops.length; i++) legs.push({ o: stops[i], d: stops[i + 1] });
+    const fr = adsbdb?.response?.flightroute;
+    if (fr?.origin?.iata_code && fr?.destination?.iata_code) {
+      const ap = (a: any): Airport => ({ code: a.iata_code, city: a.municipality ?? "", lat: a.latitude, lon: a.longitude });
+      legs.push({ o: ap(fr.origin), d: ap(fr.destination) });
+    }
+    return { airline: (fr?.airline?.name ?? "") as string, legs };
+  }) as Promise<{ airline: string; legs: Leg[] }>;
+}
+
+// True if the plane is near either airport or near the great-circle path between them
+// (same test as route_fits() in the firmware).
+function legFits(leg: Leg, lat: number, lon: number) {
+  const R = 3440.065, rad = Math.PI / 180;
+  const dist = (la1: number, lo1: number, la2: number, lo2: number) => distNm(la1, lo1, la2, lo2) / R;
+  const brg = (la1: number, lo1: number, la2: number, lo2: number) =>
+    Math.atan2(
+      Math.sin((lo2 - lo1) * rad) * Math.cos(la2 * rad),
+      Math.cos(la1 * rad) * Math.sin(la2 * rad) - Math.sin(la1 * rad) * Math.cos(la2 * rad) * Math.cos((lo2 - lo1) * rad),
+    );
+  const { o, d } = leg;
+  const d13 = dist(o.lat, o.lon, lat, lon), d23 = dist(d.lat, d.lon, lat, lon);
+  if (d13 * R < 40 || d23 * R < 40) return true;
+  const xt = Math.asin(Math.sin(d13) * Math.sin(brg(o.lat, o.lon, lat, lon) - brg(o.lat, o.lon, d.lat, d.lon)));
+  const at = Math.acos(Math.min(1, Math.cos(d13) / Math.cos(xt)));
+  return Math.abs(xt) * R < 100 && at <= dist(o.lat, o.lon, d.lat, d.lon) + 40 / R;
+}
+
+// With the plane's position, the first leg it's actually flying; without, the first known leg.
+async function route(callsign: string, lat: number, lon: number, ctx: ExecutionContext) {
   const cs = callsign.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
-  return cached(`route/${cs}`, 86400, ctx, async () => {
-    const r = await fetch(`https://api.adsbdb.com/v0/callsign/${cs}`, { headers: { "user-agent": UA } });
-    if (!r.ok) return { cs, found: false };
-    const fr = ((await r.json()) as any)?.response?.flightroute;
-    if (!fr?.origin?.iata_code || !fr?.destination?.iata_code) return { cs, found: false };
-    return {
-      cs,
-      found: true,
-      airline: fr.airline?.name ?? "",
-      o: fr.origin.iata_code, oc: fr.origin.municipality ?? "", olat: fr.origin.latitude, olon: fr.origin.longitude,
-      d: fr.destination.iata_code, dc: fr.destination.municipality ?? "", dlat: fr.destination.latitude, dlon: fr.destination.longitude,
-    };
-  });
+  const { airline, legs } = await routeLegs(cs, ctx);
+  const leg = isFinite(lat) && isFinite(lon) ? legs.find((l) => legFits(l, lat, lon)) : legs[0];
+  if (!leg) return { cs, found: false, airline };
+  return {
+    cs,
+    found: true,
+    airline,
+    o: leg.o.code, oc: leg.o.city, olat: leg.o.lat, olon: leg.o.lon,
+    d: leg.d.code, dc: leg.d.city, dlat: leg.d.lat, dlon: leg.d.lon,
+  };
 }
 
 // ---------------------------------------------------------------- space
@@ -440,7 +487,10 @@ export default {
     if (!env.TILE_KEY || request.headers.get("x-tile-key") !== env.TILE_KEY) return json({ error: "unauthorized" }, 401);
 
     try {
-      if (path.startsWith("/route/")) return tileJson(await route(decodeURIComponent(path.slice(7)), ctx));
+      if (path.startsWith("/route/")) {
+        const q = url.searchParams;
+        return tileJson(await route(decodeURIComponent(path.slice(7)), parseFloat(q.get("lat") ?? ""), parseFloat(q.get("lon") ?? ""), ctx));
+      }
       if (path === "/space") return tileJson(await space(env, ctx));
       if (path === "/ships") return tileJson(await ships(env, url.searchParams.get("r") ?? "sandiego"));
       if (path === "/todos" || path.startsWith("/todos/")) return await legacyTodos(request, env, path.slice(6), "tile", tileJson);
