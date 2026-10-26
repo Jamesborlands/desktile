@@ -4,10 +4,10 @@ A desk tile modeled on theskytile.com: a 5" color touchscreen in a 3D-printed we
 
 Owner: James, San Diego. He prefers direct, concise answers and no em dashes in writing. He's new to soldering and embedded work, so explain hardware steps plainly.
 
-## Status (Oct 24, 2026)
+## Status (Oct 25, 2026)
 - [x] Display arrived and powers on over USB-C from the laptop.
-- [ ] Confirm the board version printed on the back. The case was modeled on Elecrow's STEP model **v1.2**. If the board is a different version, compare the mounting holes, USB-C position and I2C port location before printing.
-- [ ] Adafruit order (2x #5880, #4209, #4210): placed or about to be placed.
+- [x] Board version: the label is hidden under the Amazon acrylic back panel, but firmware sees the 0x30 helper MCU, so it's V1.2/V1.3 hardware (the case was modeled on v1.2). Remove the acrylic panel before fitting the case.
+- [x] Adafruit order (2x #5880, #4209, #4210): arrived, knobs wired.
 - [x] SendCutSend faceplate: ORDERED Oct 25, 5052 0.063", clear anodized (James switched from black to a plain aluminum look), $32.21 shipped.
 - [x] Case print: ORDERED Oct 25. v4 `case/skytile_shell.stl` + `case/skytile_back.stl` on Craftcloud, gray PLA, $35.88 shipped (3D For Me Studio, Nov 3-10). Compared: Form Now white PLA $46.99 with shipping, Craftcloud ivory $58.07, JLC3DP ~$21 but 2-3 weeks from China; SendCutSend doesn't print.
 - [x] Toolchain: PlatformIO (Homebrew). Mac needs WCH CH34x DriverKit driver (activate via /Applications/CH34xVCPDriver.app); port is `/dev/cu.wchusbserial*` (number changes with the USB socket: flash with `--upload-port $(ls /dev/cu.wchusbserial* | head -1)`). Board is V1.2/V1.3 hardware (0x30 helper MCU present).
@@ -25,10 +25,11 @@ Owner: James, San Diego. He prefers direct, concise answers and no em dashes in 
   - Map: HOME button next to the place pill while away from San Diego.
   - USB 'D' = demo to-dos on screen only (for screenshots); a restart brings the real list back.
 - [x] To-do clients (Oct 24): Mac menu bar via SwiftBar (`clients/swiftbar/`, config `~/.config/skytile/config`), iPhone app + widget (`clients/ios/`, XcodeGen; runs in the simulator only: James decided against a paid Apple developer account, so the free path is the `/t/<WEB_SECRET>` web app added to the home screen). Tile polls /todos every 5 s on the To-do screen and redraws only when the list changed. Sleep dashboard: TO-DO and NEXT LAUNCH sections hide when empty, to-dos are bulleted and wrap, "+N more" when they don't fit; To-do screen rows grow for wrapped text (flashed, not yet confirmed by James). Setup for each client is in README.md.
-- [ ] Pick up here: (1) confirm plane/ship name tags now show (moved labels from the marker box onto the map, flashed but not yet seen), and the new to-do layouts on the sleep dashboard and To-do screen; (2) knobs (Oct 25): both wired and detected. Confirm turn direction (flip `DIR` in knobs.cpp if backwards) and that press/hold do the right thing on each mode. Icons (sources in `design/icons/`, made in Quiver): planes by class (airliner, fighter, military cargo, business jet, small prop, military/civil helicopter) from adsb.lol mil flag + ADS-B category + type code; ships by AIS type (sailboat, cargo, tanker, cruise, navy, fishing, tug, yacht), side views mirrored when heading west; airports = control tower; selection = amber tint only. Generator scripts are in `firmware/skytile/tools/` (svgraster.py renders the SVGs, icons2c.py / tower2c.py make LVGL images, mapgen.py builds mapdata.h from OSM coastline + Natural Earth border).
+- [x] Confirmed by James (Oct 25): name tags, to-do layouts, knobs (turn direction, press = next location, hold = home), live routes incl. Southwest, per-screen location lists.
+- [ ] Pick up here: assemble when the parts arrive (case ~Nov 3-10, faceplate ~Nov 4): VHB-tape the faceplate, remove the Amazon acrylic back panel, panel on 4x M3x6, back on 4x M3x8. Icons (sources in `design/icons/`, made in Quiver): planes by class (airliner, fighter, military cargo, business jet, small prop, military/civil helicopter) from adsb.lol mil flag + ADS-B category + type code; ships by AIS type (sailboat, cargo, tanker, cruise, navy, fishing, tug, yacht), side views mirrored when heading west; airports = control tower; selection = amber tint only. Generator scripts are in `firmware/skytile/tools/` (svgraster.py renders the SVGs, icons2c.py / tower2c.py make LVGL images, mapgen.py builds mapdata.h from OSM coastline + Natural Earth border).
 
 ## Repo
-- GitHub (private): https://github.com/Jamesborlands/desktile, branch `main`.
+- GitHub (public since Oct 25): https://github.com/Jamesborlands/desktile, branch `main`.
 - Not committed: `firmware/skytile/include/secrets.h` (copy from `secrets.example.h`), `worker/.dev.vars`, root `.env` (client API token), `worker/backups/`, `vendor/` (Elecrow clone), build output, the generated iOS `.xcodeproj`.
 
 ## Hardware
