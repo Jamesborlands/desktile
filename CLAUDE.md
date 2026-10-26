@@ -8,7 +8,7 @@ Owner: James, San Diego. He prefers direct, concise answers and no em dashes in 
 - [x] Display arrived and powers on over USB-C from the laptop.
 - [ ] Confirm the board version printed on the back. The case was modeled on Elecrow's STEP model **v1.2**. If the board is a different version, compare the mounting holes, USB-C position and I2C port location before printing.
 - [ ] Adafruit order (2x #5880, #4209, #4210): placed or about to be placed.
-- [ ] SendCutSend faceplate: in cart (Oct 25), 5052 0.063", clear anodized (James switched from black to a plain aluminum look), $32.21 shipped.
+- [x] SendCutSend faceplate: ORDERED Oct 25, 5052 0.063", clear anodized (James switched from black to a plain aluminum look), $32.21 shipped.
 - [x] Case print: ORDERED Oct 25. v4 `case/skytile_shell.stl` + `case/skytile_back.stl` on Craftcloud, gray PLA, $35.88 shipped (3D For Me Studio, Nov 3-10). Compared: Form Now white PLA $46.99 with shipping, Craftcloud ivory $58.07, JLC3DP ~$21 but 2-3 weeks from China; SendCutSend doesn't print.
 - [x] Toolchain: PlatformIO (Homebrew). Mac needs WCH CH34x DriverKit driver (activate via /Applications/CH34xVCPDriver.app); port is `/dev/cu.wchusbserial*` (number changes with the USB socket: flash with `--upload-port $(ls /dev/cu.wchusbserial* | head -1)`). Board is V1.2/V1.3 hardware (0x30 helper MCU present).
 - [ ] Firmware (`firmware/skytile/`): live Planes screen with touch works. WiFi creds in gitignored `include/secrets.h`. adsb.lol needs a non-generic User-Agent. LVGL + JSON allocate in PSRAM (internal RAM is needed for TLS). Knobs not wired yet (Adafruit order pending).
