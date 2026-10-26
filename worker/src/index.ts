@@ -18,6 +18,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import * as sat from "satellite.js";
 import { z } from "zod";
+import { AIRPORTS } from "./airports";
 import { REGIONS, Ships, shipTypeName } from "./ships";
 import { MAX_TEXT, Todo, TodoStore } from "./todos";
 import { todoPage } from "./webapp";
@@ -131,11 +132,48 @@ function legFits(leg: Leg, lat: number, lon: number) {
   return Math.abs(xt) * R < 100 && at <= dist(o.lat, o.lon, d.lat, d.lon) + 40 / R;
 }
 
-// With the plane's position, the first leg it's actually flying; without, the first known leg.
+let airportIndex: Map<string, Airport> | undefined;
+function airport(code: string): Airport | undefined {
+  if (!airportIndex) {
+    airportIndex = new Map();
+    for (const line of AIRPORTS.split("\n")) {
+      const [iata, city, lat, lon] = line.split("|");
+      if (lon) airportIndex.set(iata, { code: iata, city, lat: +lat, lon: +lon });
+    }
+  }
+  return airportIndex.get(code);
+}
+
+// The live leg from Flightradar24's map feed: right even for Southwest, whose flight numbers
+// fly different routes every day. Unofficial (James chose it, Oct 25), so it's tried first
+// and the databases above are the fallback. Cached 15 min: the flight is in the air now.
+async function liveLeg(cs: string, ctx: ExecutionContext) {
+  return cached(`live/${cs}`, 900, ctx, async () => {
+    try {
+      const r = await fetch(`https://data-cloud.flightradar24.com/zones/fcgi/feed.js?callsign=${cs}&air=1&gnd=0`, {
+        headers: { "user-agent": UA },
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+      });
+      if (!r.ok) return null;
+      const d: any = await r.json();
+      // Each flight: [hex, lat, lon, track, alt, speed, squawk, radar, type, reg, time, from, to, flight, ground, vrate, callsign, ...]
+      const f = Object.values(d).find((v: any) => Array.isArray(v) && v[16] === cs) as any[] | undefined;
+      const o = f && airport(f[11]), dst = f && airport(f[12]);
+      return o && dst ? { o, d: dst } : null;
+    } catch {
+      return null;
+    }
+  }) as Promise<Leg | null>;
+}
+
+// With the plane's position, the first leg it's actually flying (live first); without, the
+// first known leg.
 async function route(callsign: string, lat: number, lon: number, ctx: ExecutionContext) {
   const cs = callsign.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
-  const { airline, legs } = await routeLegs(cs, ctx);
-  const leg = isFinite(lat) && isFinite(lon) ? legs.find((l) => legFits(l, lat, lon)) : legs[0];
+  const placed = isFinite(lat) && isFinite(lon);
+  const [{ airline, legs }, live] = await Promise.all([routeLegs(cs, ctx), placed ? liveLeg(cs, ctx) : null]);
+  if (live) legs.unshift(live);
+  const leg = placed ? legs.find((l) => legFits(l, lat, lon)) : legs[0];
   if (!leg) return { cs, found: false, airline };
   return {
     cs,

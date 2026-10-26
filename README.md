@@ -100,7 +100,7 @@ flowchart LR
   IPs. It tries adsb.lol, then adsb.fi, then OpenSky, and uses the first that answers. Each
   feed's daily cap is budgeted (adsb.lol allows 500 requests a day), and a feed that answers
   429 is skipped for 10 minutes. Planes refresh every 10 s on the Planes screen and every 5 min
-  on the sleep dashboard. Routes come from adsb.lol's route data and adsbdb.com; the Worker
+  on the sleep dashboard. Routes come from Flightradar24's live map feed, falling back to adsb.lol's route data and adsbdb.com; the Worker
   checks both against where the plane is and only returns a leg it's actually flying.
 - **Ships:** aisstream.io is a WebSocket firehose, too heavy for the ESP32. The Worker keeps
   one connection open for every hotspot asked for in the last 15 minutes and serves a
