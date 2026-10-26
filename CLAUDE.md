@@ -8,8 +8,8 @@ Owner: James, San Diego. He prefers direct, concise answers and no em dashes in 
 - [x] Display arrived and powers on over USB-C from the laptop.
 - [ ] Confirm the board version printed on the back. The case was modeled on Elecrow's STEP model **v1.2**. If the board is a different version, compare the mounting holes, USB-C position and I2C port location before printing.
 - [ ] Adafruit order (2x #5880, #4209, #4210): placed or about to be placed.
-- [ ] SendCutSend faceplate: in cart (black anodized 5052, 0.063", $32.21 shipped).
-- [ ] Craftcloud print: cart holds OLD v3 files. Re-upload `case/skytile_shell.stl` + `case/skytile_back.stl` (v4) before ordering. White PLA, about $39.
+- [ ] SendCutSend faceplate: in cart (Oct 25), 5052 0.063", clear anodized (James switched from black to a plain aluminum look), $32.21 shipped.
+- [ ] Craftcloud print: v4 `case/skytile_shell.stl` + `case/skytile_back.stl` in cart (Oct 25), ivory PLA, $58.07 shipped (Hudson Creative Group). Old v3 files removed.
 - [x] Toolchain: PlatformIO (Homebrew). Mac needs WCH CH34x DriverKit driver (activate via /Applications/CH34xVCPDriver.app); port is `/dev/cu.wchusbserial*` (number changes with the USB socket: flash with `--upload-port $(ls /dev/cu.wchusbserial* | head -1)`). Board is V1.2/V1.3 hardware (0x30 helper MCU present).
 - [ ] Firmware (`firmware/skytile/`): live Planes screen with touch works. WiFi creds in gitignored `include/secrets.h`. adsb.lol needs a non-generic User-Agent. LVGL + JSON allocate in PSRAM (internal RAM is needed for TLS). Knobs not wired yet (Adafruit order pending).
   - Flash over WiFi: `firmware/skytile/tools/ota.sh` (builds, then sends to skytile.local with the OTA_PASS from secrets.h; two 6 MB app slots). Claude must run it with the sandbox disabled (the sandbox blocks the tile's connection back to the Mac). USB still works as a fallback.
