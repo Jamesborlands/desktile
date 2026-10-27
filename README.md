@@ -43,15 +43,11 @@ After 30 seconds untouched the tile turns into a clock: the map keeps running on
 
 ### To-dos from the Mac menu bar
 
-The same list lives in the menu bar (a [SwiftBar](https://swiftbar.app) plugin): the open
-count up top, click an item to check it off, Option-Cmd-T to add one. There's also an
+The same list lives in the Mac menu bar (a native Liquid Glass app): the open count up top,
+Option-Cmd-T to drop it down and type, click a circle to check off, double-click to edit. There's also an
 iPhone app with home and lock screen widgets, a Siri Shortcut, and a phone web app.
 Setup is in [docs/todos.md](docs/todos.md).
 
-<p align="center">
-  <img src="docs/images/menubar.png" width="370" alt="SkyTile menu bar dropdown: open to-dos with circles, Add todo, Edit, and items done today">
-  <br><sub>Drawn from the plugin's actual menu output.</sub>
-</p>
 
 ### Hotspots
 
@@ -135,7 +131,7 @@ lean, 171.6 x 92.3 mm face, knobs 42 mm apart.
 |---|---|
 | [`firmware/skytile/`](firmware/skytile) | PlatformIO project: LVGL UI, data fetching, knobs, OTA updates |
 | [`worker/`](worker) | Cloudflare Worker (TypeScript): ships, space, to-dos, MCP server |
-| [`clients/`](clients) | SwiftBar menu bar plugin, SwiftUI iPhone app + widget |
+| [`clients/`](clients) | Mac menu bar app (SwiftUI), iPhone app + widget (SwiftUI) |
 | [`case/`](case) | CadQuery source, STL / STEP / DXF exports |
 | [`design/`](design) | Vehicle icons (SVG), knob simulator, parts list |
 

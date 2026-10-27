@@ -78,25 +78,32 @@ npx wrangler deploy
   they don't all fit) and NEXT LAUNCH. Each section is hidden when it's empty, and NEXT
   LAUNCH moves up when there are no to-dos.
 
-## Mac menu bar (SwiftBar)
+## Mac menu bar
 
-`clients/swiftbar/skytile-todos.30s.py` shows the open count in the menu bar. Click it to see
-the open items: click an item to check it off. "Add todo..." (or Cmd+Option+T) opens a dialog.
-Hover "Edit" and click an item to change its text (the dialog also has Delete). Items checked
-off today are listed under "Done today": click one to undo. "Clear done" removes them now;
-otherwise they disappear 24 hours after being checked off. It refreshes every 30 s and right
-after each click.
+`clients/mac/` is a native SwiftUI menu bar app (macOS 26+, Liquid Glass). The menu bar shows
+a checklist icon and the open count. Click it, or press Cmd+Option+T from anywhere, and a glass
+panel drops down with the add field already focused: type and press Return, and it stays ready
+for the next one.
+
+- **Check off:** click the circle. Click a completed item's circle to undo.
+- **Edit:** double-click the text (or hover and click the pencil) to edit in place. Return
+  saves, Esc cancels.
+- **Delete:** hover and click the trash, or right-click for Done, Edit, Copy and Delete.
+- **Completed:** items checked off today, collapsible. "Clear" removes them now; otherwise
+  they disappear 24 hours after being checked off.
+- The ••• menu has Refresh, Open at Login, Edit Config File and Quit.
+
+Changes show at once and sync in the background; it refreshes every 30 s and whenever the
+panel opens. Build and install (needs Xcode and `brew install xcodegen`, no developer account):
 
 ```sh
-brew install --cask swiftbar
-mkdir -p ~/.config/skytile "$HOME/Library/Application Support/SwiftBar/Plugins"
+mkdir -p ~/.config/skytile
 cp .env ~/.config/skytile/config && chmod 600 ~/.config/skytile/config
-ln -sf "$PWD/clients/swiftbar/skytile-todos.30s.py" "$HOME/Library/Application Support/SwiftBar/Plugins/"
-open -a SwiftBar      # first launch: choose that Plugins folder if it asks
+clients/mac/install.sh     # builds, copies to ~/Applications/SkyTile.app, opens it
 ```
 
-It only needs the macOS system `python3` (standard library). To try it in a terminal, run the
-script directly: it prints the menu.
+Then turn on "Open at Login" in the ••• menu. Launch it with `open`, not by running the
+binary from a terminal (macOS then files the menu bar icon under the terminal app).
 
 ## iPhone
 

@@ -1,0 +1,31 @@
+# XcodeGen spec for the SkyTile Mac menu bar app (macOS 26+, Liquid Glass).
+# Build and install with ./install.sh. SkyTileBar.xcodeproj and Info.plist are generated:
+# edit this file instead. Signed "to run locally", so no Apple developer account is needed.
+name: SkyTileBar
+options:
+  deploymentTarget:
+    macOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_HARDENED_RUNTIME: NO
+targets:
+  SkyTileBar:
+    type: application
+    platform: macOS
+    sources: [Sources]
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: SkyTile
+        CFBundleName: SkyTile
+        LSUIElement: true
+        LSApplicationCategoryType: public.app-category.productivity
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.seobubbles.skytile.mac
+        PRODUCT_NAME: SkyTile
