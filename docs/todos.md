@@ -105,6 +105,9 @@ clients/mac/install.sh     # builds, copies to ~/Applications/SkyTile.app, opens
 Then turn on "Open at Login" in the ••• menu. Launch it with `open`, not by running the
 binary from a terminal (macOS then files the menu bar icon under the terminal app).
 
+`clients/mac/snapshot.sh` retakes the README screenshot (`docs/images/menubar.png`) with
+sample to-dos instead of the real list. It needs Screen Recording for the terminal.
+
 ## iPhone
 
 ### Free option: the web app
