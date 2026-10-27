@@ -101,7 +101,21 @@ final class TodoStore: ObservableObject {
     var open: [Todo] { todos.filter { !$0.done } }
     var done: [Todo] { todos.filter { $0.done } }
 
+    // `--demo`: sample items and no network, for screenshots.
+    private let demo = CommandLine.arguments.contains("--demo")
+
     func start() {
+        if demo {
+            todos = [
+                Todo(id: "1", text: "Book the Del Mar dawn patrol", done: false),
+                Todo(id: "2", text: "Print the new case in gray PLA", done: false),
+                Todo(id: "3", text: "Order M3x8 screws", done: false),
+                Todo(id: "4", text: "Call the dentist", done: false),
+                Todo(id: "5", text: "Flash the tile firmware", done: true),
+            ]
+            updated = Date()
+            return
+        }
         guard timer == nil else { return }
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -157,6 +171,7 @@ final class TodoStore: ObservableObject {
     }
 
     private func sync(_ op: @escaping @MainActor () async throws -> Void) {
+        guard !demo else { return }
         Task {
             do {
                 try await op()

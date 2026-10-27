@@ -32,19 +32,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--show") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { AppDelegate.togglePanel() }
         }
-        // `--snapshot <png>`: also write the open panel to a PNG (layout check only: it
-        // draws without the live glass behind it).
-        if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
+        // `--window-id <file>`: write the open panel's window number there, for
+        // `screencapture -l` (see snapshot.sh).
+        if let i = CommandLine.arguments.firstIndex(of: "--window-id"), i + 1 < CommandLine.arguments.count {
             let path = CommandLine.arguments[i + 1]
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { AppDelegate.snapshot(to: path) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                guard let w = NSApp.windows.first(where: { $0.isVisible && !$0.className.contains("StatusBarWindow") }) else { return }
+                try? "\(w.windowNumber)".write(toFile: path, atomically: true, encoding: .utf8)
+            }
         }
-    }
-
-    private static func snapshot(to path: String) {
-        guard let view = NSApp.windows.first(where: { $0.isVisible && !$0.className.contains("StatusBarWindow") })?.contentView,
-              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
     }
 
     // Cmd+Option+T: a Carbon hot key, which needs no Accessibility permission.

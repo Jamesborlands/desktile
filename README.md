@@ -48,6 +48,10 @@ Option-Cmd-T to drop it down and type, click a circle to check off, double-click
 iPhone app with home and lock screen widgets, a Siri Shortcut, and a phone web app.
 Setup is in [docs/todos.md](docs/todos.md).
 
+<p align="center">
+  <img src="docs/images/menubar.png" width="360" alt="SkyTile menu bar panel: a New to-do field, four open to-dos with circles, and one completed item">
+</p>
+
 
 ### Hotspots
 
