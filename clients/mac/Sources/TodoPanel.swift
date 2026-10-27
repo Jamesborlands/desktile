@@ -246,7 +246,6 @@ private struct TodoRow: View {
                     .contentShape(.rect)
                     .onTapGesture(count: 2, perform: beginEdit)
             }
-            if hovering && !isEditing { actions }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -254,6 +253,8 @@ private struct TodoRow: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(isEditing ? Color.accentColor.opacity(0.15) : hovering ? Color.primary.opacity(0.08) : .clear)
         }
+        // The buttons float over the row's trailing end, so the text never rewraps.
+        .overlay(alignment: .topTrailing) { actions.padding(.top, 3).padding(.trailing, 4) }
         .onHover { hovering = $0 }
         .contextMenu {
             Button(todo.done ? "Mark as Not Done" : "Mark as Done", systemImage: todo.done ? "circle" : "checkmark.circle") {
@@ -289,7 +290,11 @@ private struct TodoRow: View {
             }
             iconButton("trash", help: "Delete") { store.remove(todo) }
         }
-        .transition(.opacity)
+        .padding(.horizontal, 2)
+        .background(.thickMaterial, in: .capsule)
+        .opacity(hovering && !isEditing ? 1 : 0)
+        .allowsHitTesting(hovering && !isEditing)
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 
     private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {

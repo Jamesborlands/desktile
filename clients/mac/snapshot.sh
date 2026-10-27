@@ -12,5 +12,6 @@ sleep 5
 screencapture -x -l "$(cat "$id")" "$out"
 rm -f "$id"
 pkill -x SkyTile || true
+sleep 1
 open ~/Applications/SkyTile.app
 echo "Wrote $out"
